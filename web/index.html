@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Criminal Network Analysis System</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <div class="brand">
+      <span class="emblem" aria-hidden="true">CNAS</span>
+      <span class="brandtext">
+        <strong>Criminal Network Analysis System</strong>
+        <span class="tag">Synthetic data</span>
+      </span>
+    </div>
+    <div class="identity">
+      <select id="roleSelect" aria-label="Signed-in role"></select>
+      <span class="idunit" id="unitLabel"></span>
+    </div>
+  </div>
+</header>
+
+<nav class="mainnav" aria-label="Primary">
+  <div class="mainnav-inner" id="tabs">
+    <button class="tab" data-view="workspace" aria-current="page">Case workspace</button>
+    <button class="tab" data-view="queue">Review queue <span class="count" id="pendingPill">0</span></button>
+    <button class="tab" data-view="emergency">Emergency search</button>
+    <button class="tab" data-view="audit">Audit log</button>
+  </div>
+</nav>
+
+<!-- ============================================================ WORKSPACE -->
+<main class="view active" id="view-workspace">
+  <aside class="rail">
+    <section class="railsection">
+      <h2>Cases</h2>
+      <div id="caseList" class="caselist"></div>
+    </section>
+    <section class="railsection grow">
+      <h2>Findings on this network</h2>
+      <div id="wsFindings" class="minifindings"></div>
+    </section>
+    <section class="railsection" id="withheldSection" hidden>
+      <div id="withheld" class="withheld"></div>
+    </section>
+  </aside>
+
+  <section class="canvaswrap">
+    <div class="canvasbar">
+      <div class="canvasleft">
+        <strong id="canvasTitle">Select a case</strong>
+        <span id="canvasSub"></span>
+      </div>
+      <div class="canvastools">
+        <label class="ctl" for="hopSelect">Depth
+          <select id="hopSelect">
+            <option value="1">1 hop</option>
+            <option value="2" selected>2 hops</option>
+            <option value="3">3 hops</option>
+          </select>
+        </label>
+        <label class="ctl" for="layoutSelect">Layout
+          <select id="layoutSelect">
+            <option value="cose">Force</option>
+            <option value="concentric">Concentric</option>
+            <option value="breadthfirst">Hierarchy</option>
+            <option value="circle">Circle</option>
+          </select>
+        </label>
+        <button id="btnFit" class="btn">Fit</button>
+        <button id="btnChain" class="btn">Trace cross-domain link</button>
+        <button id="btnExportCase" class="btn primary">Export report</button>
+      </div>
+    </div>
+
+    <div id="cy"></div>
+
+    <div class="canvasfoot">
+      <div class="legend" id="legend"></div>
+      <span id="queryStat"></span>
+    </div>
+  </section>
+
+  <aside class="panel" id="panelWrap">
+    <div class="panelbar">
+      <span>Details</span>
+      <button class="panelclose" id="panelClose" aria-label="Close details">Close</button>
+    </div>
+    <div class="panelbody" id="panel">
+      <p class="empty">Select a case, a record on the graph, or a finding.</p>
+    </div>
+  </aside>
+</main>
+
+<!-- ================================================================ QUEUE -->
+<main class="view" id="view-queue">
+  <aside class="rail">
+    <section class="railsection">
+      <h2>Mechanism</h2>
+      <div id="familyFilter" class="filterlist"></div>
+    </section>
+    <section class="railsection">
+      <h2>Status</h2>
+      <div id="statusFilter" class="filterlist"></div>
+    </section>
+  </aside>
+  <section class="pagewrap">
+    <div class="pagehead">
+      <div>
+        <h1>Review queue</h1>
+      </div>
+      <button id="btnExportQueue" class="btn primary">Export report</button>
+    </div>
+    <div id="queueList" class="queuelist"></div>
+  </section>
+</main>
+
+<!-- ============================================================ EMERGENCY -->
+<main class="view" id="view-emergency">
+  <section class="pagewrap narrow">
+    <div class="pagehead">
+      <div>
+        <h1>Emergency search</h1>
+      </div>
+    </div>
+    <div class="searchbox">
+      <input id="emgInput" type="search" autocomplete="off"
+             aria-label="Search identifier"
+             placeholder="Phone, IMEI, vehicle registration, account or name">
+      <button id="emgBtn" class="btn primary">Search</button>
+    </div>
+    <div class="hints">
+      <button class="chip" data-q="9039144517">9039144517</button>
+      <button class="chip" data-q="358240051111110">358240051111110</button>
+      <button class="chip" data-q="Ramesh">Ramesh</button>
+    </div>
+    <div id="emgTiming" class="timing"></div>
+    <div id="emgResults" class="results"></div>
+  </section>
+</main>
+
+<!-- ================================================================ AUDIT -->
+<main class="view" id="view-audit">
+  <section class="pagewrap">
+    <div class="pagehead">
+      <div>
+        <h1>Audit log</h1>
+      </div>
+      <div class="headactions">
+        <span id="chainState" class="chainstate"></span>
+        <button id="btnVerify" class="btn primary">Verify chain</button>
+      </div>
+    </div>
+    <div class="tablewrap"><div id="auditTable" class="datatable"></div></div>
+  </section>
+</main>
+
+<div id="toast" class="toast" role="status"></div>
+
+<script src="/static/vendor/cytoscape.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
