@@ -10,12 +10,15 @@ import json
 import time
 from typing import Any
 
-from fastapi import Body, Depends, FastAPI, HTTPException, Query
+from fastapi import (Body, Depends, FastAPI, File, HTTPException, Query,
+                     UploadFile)
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import config, report as report_mod, store as store_mod
+from . import (config, extract as extract_mod, intake as intake_mod,
+               mechanisms, report as report_mod, store as store_mod)
 from .auth import Principal, current
+from .er import Resolver
 from .graph import GraphStore
 
 app = FastAPI(title="CNAS", version="0.1.0",
@@ -24,17 +27,42 @@ app = FastAPI(title="CNAS", version="0.1.0",
 _graph: GraphStore | None = None
 _findings: list[dict[str, Any]] = []
 
+# The graph and the findings are held in memory between requests, and
+# run_pipeline.py rebuilds both files from seed underneath a running server.
+# Without this, a server started before the rebuild would keep serving the old
+# graph and then write it back over the new one on the next ingestion - a reset
+# that silently undoes itself, which is the worst way to find out mid-demo.
+_mtimes: dict[str, float] = {}
+
+
+def _stale(key: str, path) -> bool:
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return False
+    if _mtimes.get(key) == mtime:
+        return False
+    _mtimes[key] = mtime
+    return True
+
+
+def _mark_written(key: str, path) -> None:
+    try:
+        _mtimes[key] = path.stat().st_mtime
+    except OSError:
+        _mtimes.pop(key, None)
+
 
 def graph() -> GraphStore:
     global _graph
-    if _graph is None:
+    if _stale("graph", config.GRAPH_PATH) or _graph is None:
         _graph = GraphStore.load()
     return _graph
 
 
 def findings() -> list[dict[str, Any]]:
     global _findings
-    if not _findings:
+    if _stale("findings", config.FINDINGS_PATH) or not _findings:
         _findings = json.loads(config.FINDINGS_PATH.read_text(encoding="utf-8"))
     return _findings
 
@@ -42,6 +70,7 @@ def findings() -> list[dict[str, Any]]:
 def _persist_findings() -> None:
     config.FINDINGS_PATH.write_text(
         json.dumps(_findings, indent=2, ensure_ascii=False), encoding="utf-8")
+    _mark_written("findings", config.FINDINGS_PATH)
 
 
 def _visible_findings(p: Principal) -> list[dict[str, Any]]:
@@ -290,9 +319,137 @@ def unmerge(merge_id: str, payload: dict = Body(default={}),
         raise HTTPException(status_code=404, detail="no such merge")
     ok = g.unmerge(merge_id)
     g.save()
+    _mark_written("graph", config.GRAPH_PATH)
     store_mod.audit(p.actor, p.role, "MERGE_REVERSED", merge_id,
                     {"reason": payload.get("reason", ""), "applied": ok})
     return {"merge_id": merge_id, "reversed": ok, "pre_state": m["pre_state"]}
+
+
+# ---------------------------------------------------------------------- intake
+
+@app.get("/api/intake/schema")
+def intake_schema(p: Principal = Depends(current)) -> dict[str, Any]:
+    """The vocabulary the form may offer, read off the data it will join."""
+    return {
+        "mo_features": intake_mod.mo_vocabulary(graph()),
+        "packs": [{"id": k, "label": v} for k, v in sorted(config.PACK_LABELS.items())],
+    }
+
+
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+
+
+@app.post("/api/intake/parse")
+async def intake_parse(file: UploadFile = File(...),
+                       p: Principal = Depends(current)) -> dict[str, Any]:
+    """Read an FIR document and propose an intake submission from it.
+
+    Nothing is written to the graph. The result is a proposal an officer
+    reviews, so the parse is deliberately a separate call from the ingestion:
+    a document that ingested itself the moment it was dropped would put a
+    machine's reading of an FIR into the record with nobody having seen it.
+    """
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="the file is empty")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"the file is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB")
+
+    try:
+        text, how = extract_mod.read_document(file.filename or "", data)
+    except extract_mod.ExtractionError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+
+    result = extract_mod.parse_fir(text)
+
+    # A parsed modus operandi value the graph has never recorded would produce
+    # a vector the mechanism has nothing to compare against, so it is flagged
+    # here rather than silently offered to the officer as though it were usable.
+    vocab = intake_mod.mo_vocabulary(graph())
+    for key, entry in list(result["mo_features"].items()):
+        if entry["value"] not in vocab.get(key, []):
+            entry["unusable"] = True
+
+    result["source"] = {
+        "filename": file.filename, "how": how,
+        "characters": len(text), "bytes": len(data),
+    }
+    result["text"] = text[:40000]
+    store_mod.audit(p.actor, p.role, "DOCUMENT_PARSED", file.filename or "upload",
+                    {"how": how, "characters": len(text), **result["counts"]})
+    return result
+
+
+@app.post("/api/intake/fir")
+def intake_fir(payload: dict = Body(...),
+               p: Principal = Depends(current)) -> dict[str, Any]:
+    """Ingest one FIR and run it against the records already held.
+
+    Only the deterministic resolver runs here. A probabilistic merge belongs in
+    the review queue with a human in front of it, which is what the existing
+    pipeline already does; a record arriving through this door does not get a
+    shortcut past that.
+    """
+    g = graph()
+    findings()
+    try:
+        created = intake_mod.ingest(g, payload, p.display)
+    except intake_mod.IntakeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+
+    new_ids = set(created["node_ids"])
+    store_mod.audit(p.actor, p.role, "INGEST", created["case_id"],
+                    {"nodes": len(created["nodes"]), "edges": len(created["edges"]),
+                     "source": "evidence_intake", "synthetic": True})
+
+    # --- entity resolution, scoped to what has just arrived
+    resolver = Resolver(g)
+    known = {m["merge_id"] for m in g.merges}
+    merges = [m for m in resolver.deterministic_pass()
+              if (m["left"] in new_ids or m["right"] in new_ids)
+              and m["merge_id"] not in known]
+    for m in merges:
+        g.apply_merge(m)
+        store_mod.audit(p.actor, p.role, "MERGE_DECISION", m["merge_id"],
+                        {"decision": m["decision"], "score": m["score"],
+                         "method": m["method"], "left": m["left"], "right": m["right"]})
+
+    # --- modus operandi, against every case already on file
+    new_findings: list[dict[str, Any]] = []
+    if created["has_mo_profile"]:
+        existing = {f["finding_id"] for f in _findings}
+        # The vectoriser refits over the enlarged corpus, so scores on existing
+        # pairs shift slightly. Findings are added by id and never replaced by
+        # it: overwriting one would silently revert a decision an officer has
+        # already taken on it.
+        for f in mechanisms.mo_similarity(g):
+            if f.finding_id in existing:
+                continue
+            if created["case_id"] not in f.subject_ids:
+                continue
+            new_findings.append(f.to_dict())
+            store_mod.audit(p.actor, p.role, "FINDING_CREATED", f.finding_id,
+                            {"mechanism": f.mechanism, "confidence": f.confidence,
+                             "tier": f.tier})
+
+    _findings.extend(new_findings)
+    _persist_findings()
+    g.save()
+    _mark_written("graph", config.GRAPH_PATH)
+
+    # Which records the new case attached itself to is the whole point, so it
+    # is returned rather than left to be inferred from the redrawn graph.
+    attached = sorted({m["left"] for m in merges} | {m["right"] for m in merges})
+    return {
+        "case_id": created["case_id"],
+        "created_nodes": created["node_ids"],
+        "created_edges": created["edge_ids"],
+        "merges": merges,
+        "attached_to": [n for n in attached if n not in new_ids],
+        "findings": new_findings,
+    }
 
 
 # ------------------------------------------------------------------- emergency
@@ -348,3 +505,10 @@ async def not_found(request, exc):
 
 
 app.mount("/static", StaticFiles(directory=str(config.WEB_DIR)), name="static")
+
+# The sample FIRs are served so the intake demonstration is one click rather
+# than a file dialogue on someone else's laptop. They are synthetic documents
+# in the repository, not data.
+if config.SAMPLES_DIR.is_dir():
+    app.mount("/samples", StaticFiles(directory=str(config.SAMPLES_DIR)),
+              name="samples")

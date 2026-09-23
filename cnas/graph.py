@@ -29,6 +29,10 @@ class GraphStore:
         self.daily_volume: dict[str, Any] = data.get("daily_volume", {})
         self.mo_profiles: dict[str, Any] = data.get("mo_profiles", {})
         self.merges: list[dict[str, Any]] = data.get("merges", [])
+        # Keyed on the tier set, never shared between keys: a Restricted-tier
+        # result reaching a Standard caller would be a governance failure rather
+        # than a caching bug. Cleared whenever the graph itself changes.
+        self._centrality_cache: dict[frozenset, dict[str, Any]] = {}
 
         g = nx.MultiDiGraph()
         for n in data["nodes"]:
@@ -89,7 +93,8 @@ class GraphStore:
     def _node_payload(node_id: str, d: dict[str, Any]) -> dict[str, Any]:
         props = {k: v for k, v in d.items()
                  if k not in ("label", "tier", "source_record_id")}
-        style = config.NODE_STYLE.get(d["label"], {"color": "#8b949e", "glyph": "?"})
+        style = config.NODE_STYLE.get(
+            d["label"], {"color": "#8b949e", "glyph": "?", "icon": "document"})
         return {
             "id": node_id,
             "label": d["label"],
@@ -99,6 +104,7 @@ class GraphStore:
             "display": _display_name(d, node_id),
             "color": style["color"],
             "glyph": style["glyph"],
+            "icon": style.get("icon", "document"),
         }
 
     def _edge_payload(self, u: str, v: str, k: str, d: dict[str, Any]) -> dict[str, Any]:
@@ -138,11 +144,14 @@ class GraphStore:
             frontier = nxt
 
         sub = vis.subgraph(seen)
+        nodes = [self._node_payload(n, sub.nodes[n]) for n in sub.nodes]
         return {
             "center": node_id,
-            "nodes": [self._node_payload(n, sub.nodes[n]) for n in sub.nodes],
+            "nodes": nodes,
             "edges": [self._edge_payload(u, v, k, d)
                       for u, v, k, d in sub.edges(keys=True, data=True)],
+            "max_betweenness": self._attach_centrality(nodes, allowed_tiers),
+            "timeline": self.timeline(seen, allowed_tiers),
             "truncated": len(seen) >= cap,
             "cap": cap,
         }
@@ -166,10 +175,13 @@ class GraphStore:
                     k, d = next(iter(full[u][v].items()))
                     edges.append(self._edge_payload(u, v, k, d))
                     break
+        nodes = [self._node_payload(n, full.nodes[n]) for n in path]
         return {
             "found": True,
-            "nodes": [self._node_payload(n, full.nodes[n]) for n in path],
+            "nodes": nodes,
             "edges": edges,
+            "max_betweenness": self._attach_centrality(nodes, allowed_tiers),
+            "timeline": self.timeline(path, allowed_tiers),
             "hops": len(path) - 1,
         }
 
@@ -226,6 +238,83 @@ class GraphStore:
             "ranked": ranked,
             "bounded_at": cap,
         }
+
+    def invalidate_centrality(self) -> None:
+        """Called by anything that changes the shape of the graph."""
+        self._centrality_cache.clear()
+
+    def centrality(self, allowed_tiers: Iterable[str]) -> dict[str, Any]:
+        """Betweenness and community membership for every visible record.
+
+        Both are computed on resolved identities, so a record is given the
+        figure belonging to the identity it resolved into rather than zero -
+        otherwise two of the three records behind one person would render as
+        peripheral when the person is the bridge.
+        """
+        key = frozenset(allowed_tiers)
+        cached = self._centrality_cache.get(key)
+        if cached is not None:
+            return cached
+
+        analysis = self.communities_and_bridges(key)
+        canonical = self.canonical_map(key)
+        btw = analysis["betweenness"]
+        membership = analysis["membership"]
+        per_node = {}
+        for n in self.visible(key).nodes:
+            c = canonical.get(n, n)
+            per_node[n] = {
+                "betweenness": round(btw.get(c, 0.0), 4),
+                "community": membership.get(c),
+            }
+        result = {
+            "per_node": per_node,
+            "max_betweenness": round(max(btw.values()), 4) if btw else 0.0,
+            "n_communities": analysis["n_communities"],
+        }
+        self._centrality_cache[key] = result
+        return result
+
+    def _attach_centrality(self, nodes: list[dict[str, Any]],
+                           allowed_tiers: Iterable[str]) -> float:
+        """Annotate node payloads in place; returns the network-wide maximum."""
+        c = self.centrality(allowed_tiers)
+        for n in nodes:
+            n.update(c["per_node"].get(n["id"], {"betweenness": 0.0, "community": None}))
+        return c["max_betweenness"]
+
+    # -------------------------------------------------------------- timeline
+    def timeline(self, node_ids: Iterable[str],
+                 allowed_tiers: Iterable[str]) -> list[dict[str, Any]]:
+        """Dated events among the given records, in event-time order.
+
+        Only edge types in config.EVENT_EDGE_TYPES are returned. Both times are
+        carried through: event time is when it happened, ingestion time is when
+        this system learnt of it, and the gap between them is the point.
+        """
+        ids = set(node_ids)
+        vis = self.visible(allowed_tiers)
+        events = []
+        for u, v, k, d in vis.edges(keys=True, data=True):
+            if u not in ids or v not in ids:
+                continue
+            if d.get("type") not in config.EVENT_EDGE_TYPES:
+                continue
+            if not d.get("event_time"):
+                continue
+            events.append({
+                "edge_id": k,
+                "type": d["type"],
+                "event_time": d["event_time"],
+                "ingested_time": d.get("ingested_time"),
+                "src": u,
+                "dst": v,
+                "src_display": _display_name(vis.nodes[u], u),
+                "dst_display": _display_name(vis.nodes[v], v),
+                "src_label": vis.nodes[u].get("label"),
+            })
+        events.sort(key=lambda e: e["event_time"])
+        return events
 
     def canonical_map(self, allowed_tiers: Iterable[str]) -> dict[str, str]:
         """Map every record to its resolved identity via the SAME_AS closure.
@@ -353,6 +442,7 @@ class GraphStore:
         two records from one.
         """
         self.merges.append(merge)
+        self.invalidate_centrality()
         if merge["decision"] != "auto_merge":
             return
         global_key = merge["merge_id"]
@@ -373,6 +463,7 @@ class GraphStore:
     def unmerge(self, merge_id: str) -> bool:
         """Reverse a merge (FR-ER-3). Pre-merge state is recoverable by design."""
         key = f"SAME_AS/{merge_id}"
+        self.invalidate_centrality()
         removed = False
         for u, v, k in list(self.g.edges(keys=True)):
             if k == key:

@@ -1,6 +1,6 @@
-# Demo script — six steps, mapped 1:1 to PRD §7.3
+# Demo script — the six PRD §7.3 criteria, then two closing steps
 
-Rehearse this. Do not improvise it. Roughly 6–7 minutes.
+Rehearse this. Do not improvise it. Roughly 8–9 minutes.
 
 **Before you start:** run `python run_pipeline.py` (resets every finding to
 pending), then `python serve.py`. Role selector at top right should read
@@ -24,6 +24,13 @@ pending), then `python serve.py`. Role selector at top right should read
 settle. In the left rail under *Findings on this network*, click
 **Entity resolution collapse**.
 
+**Before you say anything, let them read the canvas.** Every node carries its
+record type as a three-letter code, its betweenness as its size, and a red ring
+if a finding cites it. The three `PER` nodes that are all Ramesh Yadav are the
+same size as each other, because centrality is computed on resolved identities
+rather than on raw records — which is the point this step is about, visible
+before anyone says it.
+
 **Say:**
 > "Three cases. Jaipur, Indore, Surat. Three districts, three filing officers,
 > three different investigations. The name is spelled three different ways —
@@ -44,18 +51,26 @@ settle. In the left rail under *Findings on this network*, click
 
 ## 2 — Cross-domain chain · criterion 2
 
-**Do:** Click **Trace cross-domain link** in the canvas bar. The five-hop path
-replaces the case view and reads left to right, end to end.
+**Do:** Click **Trace cross-domain link** in the canvas bar. The graph stands
+down and the path takes the whole view: six numbered cards, each with what that
+record is, and between them the relationship traversed and the date it happened.
 
-**Say:**
-> "Theft case in Jaipur. The stolen gold goes to a bullion dealer. That dealer
-> controls an account already flagged for laundering. That account transacts with
-> an account belonging to the financier behind an undeclared consignment seized at
-> Kandla port — a customs case, different agency, different state, different
-> crime.
+**Read the captions in order, left to right.** They are not narration — every
+one is a field off the record itself:
+
+> "Theft & Robbery, Jaipur. Receiver of stolen property, bullion dealer.
+> Laundering suspect, Union Bank. Under scrutiny, Kotak Mahindra. Financier,
+> import-export. Smuggling & Customs, Kandla.
+> That progression is the system's, not mine. I have not written a word of it —
+> the dealer's role is on his record, the account flag is on the account, the
+> crime type is on the case.
 > Five hops. No single source system holds both ends of this path. Today nobody
 > connects those two cases, because there is no place where both of them exist
 > at once."
+
+**If asked why it is not drawn as a graph:** a six-node line laid out by a force
+algorithm is a worse drawing of itself. The cards show every node, every
+relationship and every date, and they fit on a projector.
 
 ---
 
@@ -160,7 +175,59 @@ selector to **Restricted Analyst**. Re-open case C-005 or the review queue.
 
 ---
 
-## 7 - Taking it off the screen
+## 7 — A new record arriving · the graph is not a picture
+
+**Do:** Go to **Evidence intake**. Drag `samples/FIR-Kota-2026-00318.docx` onto
+the drop zone — or click the **Kota burglary (.docx)** shortcut. Type nothing.
+
+**Say while it parses:**
+> "That is a Word document. An FIR, as it would actually arrive."
+
+**Point at the blue panel, then scroll the form:**
+> "Twenty values, out of a document nobody has read. Six case fields, the
+> accused and his date of birth, his mobile number, the handset IMEI, and all
+> ten modus operandi attributes. Under every box is where it came from.
+> Some of that is trivial — 'District: Kota' is a labelled field on a form, not
+> a discovery. The IMEI is a shape: fifteen consecutive digits. Note the order
+> there, because it matters — the IMEI is taken first and masked out, or ten of
+> its digits become a phone number that was never in the document.
+> The interesting row is the modus operandi. The document says 'gas cutter'. The
+> attribute says `thermal_cutting`, because the case in Nagpur says
+> 'oxy-acetylene torch' and those are the same method described twice. That is
+> the whole reason the mechanism carries a structured vector instead of reading
+> the narrative."
+
+**Do:** Expand **Document text, with every extracted value marked**.
+> "And here is the document with every one of them highlighted where it sits.
+> Nothing here asks to be trusted."
+
+**Say, before clicking:**
+> "It has stopped. It has not filed anything. Extraction is rules, rules are
+> fallible, and the officer signs the record — so the parse is a proposal and
+> this button is the decision."
+
+**Do:** Click **Ingest record**.
+
+**Point at the result panel, then the graph it drops you into:**
+> "Four records created. Three records already on file resolved to the same
+> handset — those are the three green-ringed ones, and these three in blue were
+> already here. Two findings raised against cases in Jaipur and Nagpur.
+> Nobody searched for anything, and nobody typed anything. A document arrived
+> and the system found what it belonged to. That is the whole argument: the FIR
+> is not a document that goes into a drawer, it is a node that lands in a
+> network."
+
+**Do:** Go to **Audit log**, and click **Verify chain integrity**.
+> "The ingestion, each merge and each finding are all in the ledger, and the
+> chain still verifies."
+
+**After the demo:** run `python run_pipeline.py` to rebuild the graph from seed.
+Intake writes to it, so the next rehearsal starts from a clean C-007. You do not
+need to stop the server — it notices the rebuilt files and reloads them.
+
+---
+
+## 8 - Taking it off the screen
 
 **Do:** Back in **Case workspace**, with C-001 selected, click **Export report**.
 Open the downloaded `.docx`.
@@ -189,6 +256,28 @@ Open the downloaded `.docx`.
 ---
 
 ## If a judge asks
+
+**"Why isn't the risk colour-coded, red for dangerous?"**
+> "Because there is no risk score, and there must not be one. Size is
+> betweenness — where a record sits in the recorded relationships. The red ring
+> means a finding cites that record as evidence. Both are traceable back to
+> documents. A green-to-red ramp on a person would be a propensity score, which
+> is an explicit non-goal in the PRD and is not in the ontology anywhere."
+
+**"Is that a language model reading the FIR?"**
+> "No. It is rules, in three layers, and the interface tells you which layer
+> produced each value. Labelled form fields, identifier patterns, and a lexicon
+> for the modus operandi attributes. A transformer NER model would replace that
+> one module and nothing else — the contract it produces is the same."
+
+**"What does it get wrong?"**
+> "It will not read a scanned FIR — a PDF with no text layer is refused rather
+> than guessed at, because OCR is not in this build. It does not disambiguate
+> names; that is entity resolution and it happens afterwards, where it is
+> explainable. And the lexicon is the layer that infers, so if a narrative
+> describes a method in words we have never seen, that attribute comes back
+> empty rather than wrong. Which is why an officer confirms the parse."
+
 
 **"Is this Neo4j?"**
 > "No — NetworkX, in process. Same algorithms, Louvain and Brandes betweenness.

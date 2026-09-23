@@ -13,6 +13,7 @@ GRAPH_PATH = DATA_DIR / "graph.json"
 FINDINGS_PATH = DATA_DIR / "findings.json"
 DB_PATH = DATA_DIR / "cnas.sqlite"
 WEB_DIR = ROOT / "web"
+SAMPLES_DIR = ROOT / "samples"
 
 # --------------------------------------------------------------------------
 # Access tiers (FR-GOV-1). Ordered least to most sensitive.
@@ -101,6 +102,13 @@ MO_SIMILARITY_THRESHOLD = 0.65
 # Emergency lookup (FR-UX-7, NFR-2): p95 < 1s. Everything is pre-indexed.
 EMERGENCY_MAX_RESULTS = 25
 
+# Edges that record an event, as against a standing relationship. Every edge
+# carries an event time, but an account's opening date and an address
+# association are dated facts rather than things that happened on a case
+# timeline: plotting them puts a 2023 account opening before a 2025 theft.
+EVENT_EDGE_TYPES = ["TRANSACTED_WITH", "CALLED", "FENCED_TO",
+                    "FINANCED_BY", "APPEARS_IN"]
+
 # --------------------------------------------------------------------------
 # Model / mechanism versions (FR-MLO-1, FR-MLO-2).
 # Replaces MLflow per Architecture v8 section 6.
@@ -121,18 +129,20 @@ MODEL_VERSIONS = {
 # --------------------------------------------------------------------------
 # Colours are chosen for a light canvas: each one holds a 4.5:1 contrast ratio
 # against white, so a node label sitting beside it stays legible on a projector.
+# `icon` names a pictogram drawn by the console; `glyph` is the text fallback,
+# used as the accessible label and anywhere an image cannot be drawn.
 NODE_STYLE = {
-    "Person":               {"color": "#9a4b00", "glyph": "PER"},
-    "Phone":                {"color": "#1a5fa8", "glyph": "TEL"},
-    "BankAccount":          {"color": "#15683c", "glyph": "ACC"},
-    "Vehicle":              {"color": "#6b3fa0", "glyph": "VEH"},
-    "Address":              {"color": "#5a6472", "glyph": "ADR"},
-    "Case":                 {"color": "#a32020", "glyph": "CAS"},
-    "Document":             {"color": "#6b7480", "glyph": "DOC"},
-    "StolenProperty":       {"color": "#8a5a00", "glyph": "PRP"},
-    "SmugglingConsignment": {"color": "#a0522d", "glyph": "CNS"},
-    "CyberComplaint":       {"color": "#0f6b72", "glyph": "CYB"},
-    "KidnappingCase":       {"color": "#9c2a66", "glyph": "KID"},
+    "Person":               {"color": "#9a4b00", "glyph": "PER", "icon": "person"},
+    "Phone":                {"color": "#1a5fa8", "glyph": "TEL", "icon": "phone"},
+    "BankAccount":          {"color": "#15683c", "glyph": "ACC", "icon": "bank"},
+    "Vehicle":              {"color": "#6b3fa0", "glyph": "VEH", "icon": "vehicle"},
+    "Address":              {"color": "#5a6472", "glyph": "ADR", "icon": "pin"},
+    "Case":                 {"color": "#a32020", "glyph": "CAS", "icon": "case"},
+    "Document":             {"color": "#6b7480", "glyph": "DOC", "icon": "document"},
+    "StolenProperty":       {"color": "#8a5a00", "glyph": "PRP", "icon": "valuables"},
+    "SmugglingConsignment": {"color": "#a0522d", "glyph": "CNS", "icon": "crate"},
+    "CyberComplaint":       {"color": "#0f6b72", "glyph": "CYB", "icon": "screen"},
+    "KidnappingCase":       {"color": "#9c2a66", "glyph": "KID", "icon": "person_alert"},
 }
 
 PACK_LABELS = {

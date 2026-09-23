@@ -28,6 +28,7 @@
   <div class="mainnav-inner" id="tabs">
     <button class="tab" data-view="workspace" aria-current="page">Case workspace</button>
     <button class="tab" data-view="queue">Review queue <span class="count" id="pendingPill">0</span></button>
+    <button class="tab" data-view="intake">Evidence intake</button>
     <button class="tab" data-view="emergency">Emergency search</button>
     <button class="tab" data-view="audit">Audit log</button>
   </div>
@@ -73,11 +74,19 @@
         </label>
         <button id="btnFit" class="btn">Fit</button>
         <button id="btnChain" class="btn">Trace cross-domain link</button>
+        <button id="btnBackToCase" class="btn" hidden>Back to case view</button>
         <button id="btnExportCase" class="btn primary">Export report</button>
       </div>
     </div>
 
     <div id="cy"></div>
+
+    <div id="chainstrip" class="chainstrip" hidden></div>
+
+    <section id="timelineWrap" class="timelinewrap">
+      <h2 class="timelinehead">Events <span class="tlnote">event time, oldest first</span></h2>
+      <div id="timeline" class="timeline"></div>
+    </section>
 
     <div class="canvasfoot">
       <div class="legend" id="legend"></div>
@@ -116,6 +125,98 @@
       <button id="btnExportQueue" class="btn primary">Export report</button>
     </div>
     <div id="queueList" class="queuelist"></div>
+  </section>
+</main>
+
+<!-- =============================================================== INTAKE -->
+<main class="view" id="view-intake">
+  <section class="pagewrap form">
+    <div class="pagehead">
+      <div>
+        <h1>Evidence intake</h1>
+      </div>
+      <button id="btnIntake" class="btn primary" form="intakeForm">Ingest record</button>
+    </div>
+
+    <div id="intakeResult" class="intakeresult" hidden></div>
+
+    <div class="dropzone" id="dropzone">
+      <input type="file" id="firFile" accept=".txt,.text,.md,.docx,.pdf" hidden>
+      <div class="dzmain">
+        <strong>Drop an FIR here</strong>
+        <span>Word, PDF or plain text. The form below is filled from the
+          document; nothing is filed until you confirm it.</span>
+      </div>
+      <div class="dzactions">
+        <button type="button" class="btn" id="btnPick">Choose file</button>
+        <span class="dzor">or a sample:</span>
+        <button type="button" class="btn small sample"
+                data-file="FIR-Kota-2026-00318.docx">Kota burglary (.docx)</button>
+        <button type="button" class="btn small sample"
+                data-file="FIR-Bhilwara-2026-00204.pdf">Bhilwara UPI fraud (.pdf)</button>
+      </div>
+    </div>
+
+    <div id="parseReport" class="parsereport" hidden></div>
+
+    <form id="intakeForm" class="intake" autocomplete="off">
+      <fieldset class="fset">
+        <legend>Case particulars</legend>
+        <div class="fgrid">
+          <label class="fld wide">Case title
+            <input name="title" required maxlength="120"></label>
+          <label class="fld">District
+            <input name="district" required maxlength="60"></label>
+          <label class="fld">Crime pack
+            <select name="pack" id="intakePack" required></select></label>
+          <label class="fld">Date opened
+            <input name="opened" type="date" required></label>
+          <label class="fld">Investigating officer
+            <input name="officer" maxlength="60"></label>
+        </div>
+      </fieldset>
+
+      <fieldset class="fset">
+        <legend>FIR narrative</legend>
+        <textarea name="narrative" required rows="6" maxlength="4000"></textarea>
+      </fieldset>
+
+      <fieldset class="fset">
+        <legend>Identifiers on the record</legend>
+        <p class="fnote">Read out of the document by pattern, not by a language
+          model. Each one shows the text it came from.</p>
+        <div class="fgrid">
+          <label class="fld">Person name
+            <input name="person.name" maxlength="80"></label>
+          <label class="fld">Date of birth
+            <input name="person.dob" type="date"></label>
+          <label class="fld">Phone number
+            <input name="identifiers.number" maxlength="20"></label>
+          <label class="fld">IMEI
+            <input name="identifiers.imei" maxlength="17" inputmode="numeric"></label>
+          <label class="fld">Account number
+            <input name="identifiers.account_no" maxlength="20" inputmode="numeric"></label>
+          <label class="fld">Bank
+            <input name="identifiers.bank" maxlength="60"></label>
+          <label class="fld">Vehicle registration
+            <input name="identifiers.registration" maxlength="16"></label>
+          <label class="fld">Vehicle type
+            <input name="identifiers.vtype" maxlength="40"></label>
+        </div>
+      </fieldset>
+
+      <fieldset class="fset">
+        <legend>Modus operandi</legend>
+        <p class="fnote">Inferred from the narrative by lexicon: "gas cutter"
+          and "oxy-acetylene torch" are one method described twice. Values are
+          restricted to those already recorded against other cases, so a
+          comparison has something to run against.</p>
+        <div class="fgrid" id="intakeMO"></div>
+      </fieldset>
+    </form>
+
+    <p class="fnote foot">Records ingested here are written to the working graph.
+      Run <code>python run_pipeline.py</code> to rebuild it from seed.</p>
   </section>
 </main>
 

@@ -1,0 +1,38 @@
+                    FIRST INFORMATION REPORT
+              (Under Section 154 Cr.P.C. / Section 173 BNSS)
+
+        ** SYNTHETIC RECORD - GENERATED FOR SYSTEM DEMONSTRATION **
+        ** NOT A REAL FIR. NO REAL PERSON OR PREMISES IS DESCRIBED. **
+
+State                       : Rajasthan
+District                    : Bhilwara
+Police Station              : Kotwali
+FIR No.                     : 0204/2026
+Date of Occurrence          : 11/09/2026
+Sections                    : 420, 66C IT Act
+Offence                     : UPI fraud following OTP disclosure
+Investigating Officer       : SI N. Chauhan
+
+PARTICULARS OF THE ACCUSED
+
+Name of Accused             : Suresh Kumar
+Address                     : Shivaji Nagar, Bhilwara
+Mobile Number               : 9039144517
+Bank                        : Kotak Mahindra
+Account No.                 : 9902144007766
+
+BRIEF FACTS
+
+The complainant states that on 11.09.2026 he received a telephone call from a
+person claiming to represent his bank, who stated that his account required
+immediate re-verification. During the call the complainant was induced to
+disclose a one time password received on his registered mobile. Three
+successive UPI debits totalling Rs 2,84,000 were effected from his account
+within the following eleven minutes. The beneficiary handles resolve to a
+single current account held at a branch in Gandhidham. The complainant states
+that no card, cheque book or passbook was lost at any time.
+
+Property lost               : Rs 2,84,000 by electronic transfer
+
+Signature of the Officer in Charge
+Kotwali Police Station, Bhilwara

@@ -22,8 +22,12 @@ python serve.py            # opens http://127.0.0.1:8077
 
 No database server, no Docker, no build step, no network access required —
 Cytoscape.js is vendored locally so the demo works on venue wifi or none at all.
-`python-docx` is the only optional dependency: without it, report export falls
-back to a Word-compatible HTML document instead of a real `.docx`.
+
+Two dependencies degrade rather than break. Without `python-docx`, report export
+falls back to a Word-compatible HTML document instead of a real `.docx`, and
+evidence intake refuses `.docx` uploads with a message saying why. Without
+`pymupdf`, PDF intake falls back to `pypdf` and then refuses. Every other
+document format still works in both cases.
 
 `run_pipeline.py` ends by self-checking all six demonstration criteria from
 PRD §7.3 and prints PASS/FAIL for each. If the demo has a hole in it, that
@@ -43,11 +47,11 @@ judge asks.
 | Entity resolution | Splink | **Real logic**, different engine: rapidfuzz + jellyfish + Devanagari transliteration, same three-band decision, same reversibility |
 | Access tiers | Keycloak | **Real enforcement**, fake auth: tiers are applied in the query layer; the login is a dropdown |
 | Audit log | hash-chained | **Real.** SHA-256 chained, with a working verifier that detects any edited row |
-| Bi-temporal edges | FR-GRA-3 | **Real.** Event time and ingestion time on every edge |
+| Bi-temporal edges | FR-GRA-3 | **Real.** Event time and ingestion time on every edge, both shown on the events strip |
 | Model registry | MLflow | `model_versions` table — which is what Architecture v8 §6 specifies anyway |
 | Graph store | Neo4j + GDS | **NetworkX.** Same algorithms (Louvain, Brandes betweenness); what is lost is distribution, not method. Confined to `cnas/graph.py` |
 | Streaming / orchestration | Kafka, Flink, Airflow | A single ordered pipeline. Same stages, same sequence, different transport |
-| NER | multilingual extraction | Pre-extracted at data-generation time |
+| NER | multilingual transformer extraction | **Rule-based, and says so.** Evidence intake reads a real FIR document: labelled form fields, identifier patterns, and a modus operandi lexicon. Every value carries the span it came from. No model; no Devanagari narrative parsing |
 | PII tokenisation | Vault | SQLite token vault with logged detokenisation |
 
 The graph store is the one substitution worth stating plainly rather than
@@ -132,6 +136,101 @@ pairs no human would ever have looked at.
 
 ---
 
+## Reading the graph
+
+A node carries three things at once, and none of them is a score about a person:
+
+| Channel | Means |
+|---|---|
+| Colour and pictogram | What kind of record it is |
+| Size | Betweenness centrality, across the whole visible network |
+| Red ring | How many findings cite this record as evidence |
+
+There is deliberately no risk colour. Nothing in CNAS scores a person for
+propensity to offend, so nothing on the canvas may imply that it does. A node
+is large because of where it sits in the recorded relationships and ringed
+because evidence points at it, and both of those are traceable to records.
+
+Beneath the canvas, the **events strip** plots the dated events in the network
+on an event-time axis. Standing relationships are excluded from it: an account
+opening date and an address association are dated facts rather than things that
+happened, and plotting them puts a 2023 account opening in front of a 2025
+theft. Which edge types count as events is declared in
+`config.EVENT_EDGE_TYPES`. Hovering an event shows both its event time and its
+ingestion time, which is where the bi-temporal claim becomes checkable rather
+than asserted.
+
+---
+
+## Evidence intake
+
+Drop an FIR into the **Evidence intake** tab — Word, PDF or plain text — and it
+is read, parsed, reviewed and filed against the running graph. This is the one
+place the demonstration shows the system doing what it exists to do: a record
+arrives and attaches itself to what is already held.
+
+### Reading the document
+
+Extraction is rule-based in three layers, in decreasing reliability, and the
+interface labels every value with which layer produced it:
+
+| Layer | What it reads | Example |
+|---|---|---|
+| Labelled fields | An FIR is a form | `District : Kota` is not a guess |
+| Identifier patterns | Shapes that can be matched exactly | fifteen digits is an IMEI; `RJ 14 AB 1234` is a registration |
+| Modus operandi lexicon | Phrases that mean the same method | "gas cutter" and "oxy-acetylene torch" both give `tool_class = thermal_cutting` |
+
+An IMEI is taken before phone numbers are looked for, and its digits masked
+out, because ten digits of a fifteen-digit IMEI otherwise become a phone number
+that was never in the document.
+
+Only the third layer infers anything, and it is the one the review step exists
+for. Every extracted value carries the span of text it came from; the parse
+panel shows the document with each one marked in place, so "where did that IMEI
+come from" is answered by looking rather than by trusting. A parsed modus
+operandi value the graph has never recorded is flagged rather than offered,
+because it would produce a vector the mechanism has nothing to compare against.
+
+**The parse is a separate call from the ingestion.** A document that filed
+itself the moment it was dropped would put a machine's reading of an FIR into
+the record with nobody having seen it, which is the opposite of what the rest of
+this system argues for. Nothing reaches the graph until an officer confirms it.
+
+What this does *not* do: resolve names against a gazetteer, disambiguate people,
+or read a scanned FIR — a PDF with no text layer is refused rather than guessed
+at, and OCR is not in this build. Name disambiguation is entity resolution, and
+it happens afterwards in `er.py` where it is explainable.
+
+### After the confirmation
+
+Everything downstream of the review is the production path:
+
+- the **deterministic resolver**, unchanged, scoped to the records that just
+  arrived — a shared IMEI links the new handset to the ones already on file
+- the **modus operandi mechanism**, unchanged, against every case on record
+- an `INGEST` entry in the hash-chained ledger, plus one per merge and one per
+  finding, with `Verify chain` still passing afterwards
+
+Probabilistic merges are not applied here. A merge that needs a human belongs in
+the review queue with a human in front of it, and a record arriving through this
+door gets no shortcut past that.
+
+New findings are added by id and never replace an existing one. The narrative
+vectoriser refits over the enlarged corpus, so scores on existing pairs shift
+slightly; overwriting a finding on that basis would silently revert a decision
+an officer had already recorded against it.
+
+Intake writes to `data/graph.json`. `python run_pipeline.py` rebuilds it from
+seed, which is the reset between rehearsals, **and the running server picks that
+up without being restarted.** That is not incidental: the API holds the graph
+and the findings in memory between requests, so a server started before a
+rebuild would go on serving the old graph and then write it back over the new
+one at the next ingestion — a reset that silently undoes itself, which is the
+worst possible way to discover it. Both files are checked for modification on
+read.
+
+---
+
 ## Design decisions worth defending
 
 **A `Finding` cannot be constructed without its full contract.** Evidence,
@@ -174,9 +273,12 @@ cnas/
   mechanisms.py   all six mechanism families
   store.py        hash-chained audit, token vault, model registry
   auth.py         role -> tiers
+  extract.py      reading an FIR document: form fields, patterns, MO lexicon
+  intake.py       a new FIR arriving at a graph that already exists
   report.py       one content model, rendered to .docx or Word HTML
   api.py          FastAPI
 web/              single-page console (vendored Cytoscape.js)
+samples/          synthetic FIR documents to drop into evidence intake
 data/             generated — graph.json, findings.json, cnas.sqlite
 ```
 

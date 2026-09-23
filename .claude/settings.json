@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(python shot.py step12)",
+      "Bash(python shot.py step12b)",
+      "Bash(python shot.py chain chain)",
+      "Bash(python shot.py chain2 chain)",
+      "Bash(python shot.py chain3 chain)",
+      "Bash(python shot.py tl)",
+      "Bash(python shot.py tl2)",
+      "Bash(python shot.py fold finding)",
+      "Bash(PYTHONIOENCODING=utf-8 python -c ' *)",
+      "Bash(curl -s \"http://127.0.0.1:8077/api/audit-log?limit=12\" -H \"X-CNAS-Role: standard_officer\")",
+      "Bash(cp /tmp/g.bak data/graph.json)",
+      "Bash(cp /tmp/f.bak data/findings.json)",
+      "Bash(python shot.py intake intake)",
+      "Bash(python intake_drive.py 1600 ing)",
+      "Bash(python intake_drive.py 1600 ing2)",
+      "Bash(python intake_drive.py 1600 ing3)",
+      "Bash(python intake_drive.py 1600 ing4)",
+      "Bash(node --check web/app.js)",
+      "Bash(python walk.py 1600)",
+      "Bash(python walk.py 1000)",
+      "Bash(python walk.py 420)",
+      "Bash(python intake_drive.py 1600 fin)",
+      "Bash(curl -s \"http://127.0.0.1:8077/api/audit-log/verify\" -H \"X-CNAS-Role: standard_officer\")",
+      "Bash(curl -s \"http://127.0.0.1:8077/api/audit-log?limit=8\" -H \"X-CNAS-Role: standard_officer\")",
+      "Bash(python intake_drive.py 420 nar)",
+      "Bash(ps -W)",
+      "Read(//tmp/**)",
+      "Bash(netstat -ano)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8077 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force; \"killed $_\" }; Start-Sleep 2; if \\(Get-NetTCPConnection -LocalPort 8077 -State Listen -ErrorAction SilentlyContinue\\) { \"STILL LISTENING\" } else { \"port free\" })",
+      "Bash(curl -s \"http://127.0.0.1:8077/api/node/P-001\" -H \"X-CNAS-Role: standard_officer\")",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8077 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force; \"killed $_\" }; Start-Sleep 2; Start-Process python -ArgumentList \"serve.py\" -WorkingDirectory \"C:\\\\Apps\\\\pablo\" -WindowStyle Hidden; Start-Sleep 7; \\(Invoke-WebRequest \"http://127.0.0.1:8077/api/node/P-001\" -Headers @{\"X-CNAS-Role\"=\"standard_officer\"} -UseBasicParsing\\).Content | ConvertFrom-Json | Select-Object glyph, icon)",
+      "Bash(python shot.py ic2)"
+    ]
+  }
+}
