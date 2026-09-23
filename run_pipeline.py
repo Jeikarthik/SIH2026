@@ -65,6 +65,9 @@ def main() -> int:
         store_mod.record_model(mech, version, {"source": "config.MODEL_VERSIONS"})
 
     results = mechanisms.run_all(gs, merges)
+    raised_at = store_mod.now()
+    for f in results:
+        f.created_at = raised_at
     by_family: dict[str, int] = {}
     for f in results:
         by_family[f.family_label] = by_family.get(f.family_label, 0) + 1
@@ -87,6 +90,22 @@ def main() -> int:
                 store_mod.tokenize(str(val), field)
                 tokenised += 1
     banner("direct identifiers tokenised", f"{tokenised} values in vault")
+
+    # ---------------------------------------------------------------- stage 6
+    # Investigative milestones, logged as the case officer would have logged
+    # them. The ledger records that each was written, never what it says.
+    officers = {n["id"]: n["props"].get("officer", ACTOR)
+                for n in data["nodes"] if n["label"] == "Case"}
+    for m in seed.MILESTONES:
+        tier = m.get("tier", "standard")
+        row = store_mod.add_milestone(
+            m["case_id"], m["kind"], m["title"], m.get("detail", ""),
+            m["occurred_at"], tier, officers.get(m["case_id"], ACTOR), ROLE,
+            source="seed")
+        store_mod.audit(ACTOR, ROLE, "MILESTONE_ADDED", m["case_id"],
+                        {"milestone_id": row["milestone_id"], "kind": m["kind"],
+                         "tier": tier})
+    banner("case milestones loaded", f"{len(seed.MILESTONES)} milestones")
 
     findings_mod.save(results)
     gs.save()

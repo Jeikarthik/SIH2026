@@ -8,6 +8,10 @@ const S = {
   currentCase: null, cy: null,
   filterFamily: null, filterStatus: null,
   lastEgo: null, chainMode: false,
+  // Case file: the vocabulary comes from the server with the session, so the
+  // forms can only offer what the API will accept.
+  vocab: null, tiers: ["standard"],
+  notes: [], noteColor: "yellow", timeline: null, tlHidden: new Set(),
 };
 
 const $  = (s, r = document) => r.querySelector(s);
@@ -63,6 +67,9 @@ const ICON_PATHS = {
   screen:
     '<rect x="2.6" y="4" width="18.8" height="12.6" rx="1.8"/>' +
     '<path d="M8.6 20.6h6.8M12 16.6v4"/>',
+  note:
+    '<path d="M4 3.6h16v11L14.6 20.4H4Z"/><path d="M14.6 20.4v-5.8H20"/>' +
+    '<path d="M7.6 8.4h8.8M7.6 12h5.6"/>',
   person_alert:
     '<circle cx="9.6" cy="7.4" r="3.7"/>' +
     '<path d="M2.8 20.4c0-3.9 3.1-6.1 6.8-6.1 1.1 0 2.1.2 3 .5"/>' +
@@ -123,6 +130,10 @@ async function api(path, opts = {}) {
 
 function toast(msg, kind = "") {
   const t = $("#toast");
+  // An open modal dialog sits in the top layer above everything else on the
+  // page, so a toast has to live inside it to be seen at all.
+  const host = document.querySelector("dialog[open]") || document.body;
+  if (t.parentNode !== host) host.appendChild(t);
   t.textContent = msg;
   t.className = "toast show " + kind;
   clearTimeout(toast._t);
@@ -182,6 +193,8 @@ async function loadSession() {
     sel.value = S.role;
   }
   $("#unitLabel").textContent = s.principal.unit;
+  S.vocab = s.case_vocab;
+  S.tiers = s.principal.tiers;
   return s;
 }
 
@@ -227,10 +240,12 @@ async function selectCase(caseId) {
   if (c) {
     $("#canvasTitle").textContent = c.props.title;
     $("#canvasSub").textContent =
-      `${c.id} · ${c.props.district} · ${c.props.crime} · opened ${c.props.opened}`;
+      `${c.id} · ${c.props.district} · ${c.props.crime} · opened ${c.props.opened}` +
+      (c.props.status ? ` · ${statusLabel(c.props.status)}` : "");
   }
   await drawEgo(caseId);
   renderWorkspaceFindings();
+  refreshNoteCount(caseId);
 }
 
 async function drawEgo(nodeId) {
@@ -1315,6 +1330,334 @@ async function submitIntake(button) {
         `already on file matched.`, "good");
 }
 
+/* ================================================================ case file */
+/* Notes and the case timeline. Both are fetched per case and per role, and
+   both are filtered by tier on the server: what arrives here is already only
+   what this login may see, so nothing below decides visibility. */
+
+const statusLabel = (s) =>
+  (S.vocab && S.vocab.statuses[s]) || humanise(s || "none");
+
+const TIER_AUDIENCE = {
+  standard: "All officers",
+  elevated: "Elevated and Restricted",
+  restricted: "Restricted only",
+};
+
+/* Most sensitive first, matching the server's default: material nobody chose
+   a tier for is filed at the author's highest, not published downwards. */
+function tierOptions() {
+  return [...S.tiers].reverse().map(t =>
+    `<option value="${esc(t)}">${esc(TIER_AUDIENCE[t] || t)}</option>`).join("");
+}
+
+function tierBadge(t) {
+  return t && t !== "standard" ? `<span class="badge b-${esc(t)}">${esc(t)}</span>` : "";
+}
+
+/* Local date and time for a stored timestamp. Date-only values stay dates:
+   parsing "2025-03-12" as a Date reads it as UTC midnight and can show the
+   day before. */
+function whenText(iso) {
+  if (!iso) return "";
+  if (iso.length === 10) return shortDate(iso + "T00:00:00");
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric",
+                                     hour: "2-digit", minute: "2-digit" });
+}
+
+function currentCaseRecord() {
+  return S.cases.find(c => c.id === S.currentCase);
+}
+
+function closeDialogs() {
+  $$("dialog[open]").forEach(d => d.close());
+}
+
+/* ---------------------------------------------------------------- notes */
+async function refreshNoteCount(caseId) {
+  let r;
+  try { r = await api(`/api/cases/${encodeURIComponent(caseId)}/notes`); }
+  catch (e) { S.notes = []; r = { notes: [] }; }
+  if (caseId !== S.currentCase) return;   // a slower answer for another case
+  S.notes = r.notes;
+  const n = S.notes.length;
+  $("#noteCount").hidden = !n;
+  $("#noteCount").textContent = n;
+  $("#btnNotes").title = n ? `Case notes (${n})` : "Case notes";
+  $("#btnNotes").setAttribute("aria-label", $("#btnNotes").title);
+}
+
+async function openNotes() {
+  if (!S.currentCase) { toast("Select a case first.", "bad"); return; }
+  await refreshNoteCount(S.currentCase);
+  const c = currentCaseRecord();
+  $("#notesSub").textContent = c ? `${c.id} · ${c.props.title}` : S.currentCase;
+  $("#noteTier").innerHTML = tierOptions();
+  $("#noteForm").elements.text.maxLength = (S.vocab && S.vocab.note_max_chars) || 4000;
+  renderSwatches();
+  renderNotes();
+  const d = $("#notesDialog");
+  if (!d.open) d.showModal();
+  $("#noteForm").elements.text.focus();
+}
+
+function renderSwatches() {
+  const colors = (S.vocab && S.vocab.note_colors) || ["yellow"];
+  if (!colors.includes(S.noteColor)) S.noteColor = colors[0];
+  $("#noteSwatches").innerHTML = colors.map(c =>
+    `<button type="button" class="swatch n-${esc(c)}" role="radio"
+       aria-checked="${c === S.noteColor}" aria-label="${esc(c)}"
+       data-color="${esc(c)}"></button>`).join("");
+  $$("#noteSwatches .swatch").forEach(b => b.onclick = () => {
+    S.noteColor = b.dataset.color; renderSwatches();
+  });
+}
+
+function renderNotes() {
+  $("#noteList").innerHTML = S.notes.map(n => `
+    <article class="stickynote n-${esc(n.color)}" data-id="${esc(n.note_id)}">
+      <div class="notetext">${esc(n.text)}</div>
+      <div class="notemeta">
+        <span>${esc(n.author)} · ${esc(whenText(n.created_at))}${n.updated_at
+          ? " · edited" : ""}</span>
+        ${tierBadge(n.tier)}
+      </div>
+      ${n.mine ? `<div class="noteactions">
+        <button type="button" class="btn small" data-edit>Edit</button>
+        <button type="button" class="btn small danger" data-del>Delete</button>
+      </div>` : ""}
+    </article>`).join("") ||
+    `<p class="empty">No notes on this case yet.</p>`;
+
+  $$("#noteList .stickynote").forEach(card => {
+    const note = S.notes.find(n => n.note_id === card.dataset.id);
+    const ed = $("[data-edit]", card), del = $("[data-del]", card);
+    if (ed) ed.onclick = () => editNote(card, note);
+    if (del) del.onclick = () => deleteNote(note);
+  });
+}
+
+function editNote(card, note) {
+  const body = $(".notetext", card);
+  body.innerHTML = `<textarea class="noteedit" rows="4"
+    maxlength="${(S.vocab && S.vocab.note_max_chars) || 4000}"></textarea>`;
+  const box = $("textarea", body);
+  box.value = note.text;
+  box.focus();
+  $(".noteactions", card).innerHTML =
+    `<button type="button" class="btn small primary" data-save>Save</button>
+     <button type="button" class="btn small" data-cancel>Cancel</button>`;
+  $("[data-cancel]", card).onclick = renderNotes;
+  $("[data-save]", card).onclick = async () => {
+    try {
+      await api(`/api/cases/${encodeURIComponent(note.case_id)}/notes/` +
+        encodeURIComponent(note.note_id),
+        { method: "PATCH", body: JSON.stringify({ text: box.value }) });
+    } catch (e) { toast(e.message, "bad"); return; }
+    await refreshNoteCount(note.case_id);
+    renderNotes();
+    toast("Note updated.", "good");
+  };
+}
+
+async function deleteNote(note) {
+  if (!confirm("Delete this note? The audit log keeps a record that it existed.")) return;
+  try {
+    await api(`/api/cases/${encodeURIComponent(note.case_id)}/notes/` +
+      encodeURIComponent(note.note_id), { method: "DELETE" });
+  } catch (e) { toast(e.message, "bad"); return; }
+  await refreshNoteCount(note.case_id);
+  renderNotes();
+  toast("Note deleted.", "good");
+}
+
+async function submitNote(form) {
+  const text = form.elements.text.value.trim();
+  if (!text) { toast("A note cannot be empty.", "bad"); return; }
+  const caseId = S.currentCase;
+  try {
+    await api(`/api/cases/${encodeURIComponent(caseId)}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ text, color: S.noteColor, tier: form.elements.tier.value }),
+    });
+  } catch (e) { toast(e.message, "bad"); return; }
+  form.elements.text.value = "";
+  await refreshNoteCount(caseId);
+  renderNotes();
+  toast("Note added. Written to the audit log.", "good");
+}
+
+/* ------------------------------------------------------------- timeline */
+const KIND_MARK = {
+  case_opened: "Opened", evidence: "Evidence", network_event: "Network",
+  merge: "Resolution", finding_raised: "Finding", finding_decision: "Decision",
+  milestone: "Milestone", status_change: "Status", note: "Note",
+};
+
+async function openTimeline() {
+  if (!S.currentCase) { toast("Select a case first.", "bad"); return; }
+  const d = $("#timelineDialog");
+  $("#milestoneKind").innerHTML = Object.entries((S.vocab || {}).milestone_kinds || {})
+    .map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join("");
+  $("#milestoneTier").innerHTML = tierOptions();
+  $("#statusTier").innerHTML = tierOptions();
+  const when = $("#milestoneForm").elements.occurred_at;
+  const now = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+    .toISOString().slice(0, 16);
+  when.max = now;
+  if (!when.value) when.value = now;
+  if (!(await loadCaseTimeline())) return;
+  if (!d.open) d.showModal();
+}
+
+async function loadCaseTimeline() {
+  const caseId = S.currentCase;
+  let t;
+  try {
+    t = await api(`/api/cases/${encodeURIComponent(caseId)}/timeline` +
+      `?hops=${$("#hopSelect").value}`);
+  } catch (e) { toast(e.message, "bad"); return false; }
+  if (caseId !== S.currentCase) return false;
+  S.timeline = t;
+  renderCaseTimeline();
+  return true;
+}
+
+function renderCaseTimeline() {
+  const t = S.timeline;
+  const p = t.case.props || {};
+  $("#tlSub").textContent = `${t.case.id} · ${p.title || ""} · ` +
+    `${t.entries.length} entries` +
+    (t.span.first ? ` · ${whenText(t.span.first)} to ${whenText(t.span.last)}` : "");
+
+  $("#tlStatus").innerHTML =
+    `<span class="statuspill s-${esc(t.status)}">${esc(t.status_label)}</span>`;
+  $("#statusSelect").innerHTML = Object.entries(S.vocab.statuses)
+    .map(([k, v]) => `<option value="${esc(k)}" ${k === t.status ? "disabled" : ""}>` +
+      `${esc(v)}</option>`).join("");
+  const firstFree = Object.keys(S.vocab.statuses).find(k => k !== t.status);
+  if (firstFree) $("#statusSelect").value = firstFree;
+
+  $("#tlFilters").innerHTML = Object.entries(t.categories).map(([k, label]) =>
+    `<button type="button" class="tlchip c-${esc(k)} ${S.tlHidden.has(k) ? "" : "on"}"
+       data-cat="${esc(k)}" aria-pressed="${!S.tlHidden.has(k)}">
+       <i></i>${esc(label)} <span>${t.counts[k] || 0}</span></button>`).join("");
+  $$("#tlFilters .tlchip").forEach(b => b.onclick = () => {
+    const k = b.dataset.cat;
+    if (S.tlHidden.has(k)) S.tlHidden.delete(k); else S.tlHidden.add(k);
+    renderCaseTimeline();
+  });
+
+  const shown = t.entries.filter(e => !S.tlHidden.has(e.category));
+  if (!shown.length) {
+    $("#tlList").innerHTML = `<p class="empty">Nothing on the timeline in the
+      categories selected.</p>`;
+    return;
+  }
+
+  // Grouped by day, on the normalised key the server sorted by, so a UTC
+  // system time and a local event time land on the same local day.
+  const days = [];
+  shown.forEach(e => {
+    const day = (e.sort_key || "").slice(0, 10);
+    if (!days.length || days[days.length - 1].day !== day) days.push({ day, items: [] });
+    days[days.length - 1].items.push(e);
+  });
+
+  $("#tlList").innerHTML = days.map(g => `
+    <section class="tlday">
+      <h4 class="tldate">${esc(g.day ? shortDate(g.day + "T00:00:00") : "Undated")}</h4>
+      <ol class="tlentries">
+        ${g.items.map(e => {
+          // Midnight exactly is how a date-only record is stored, not a time
+          // anyone observed, so it is left blank rather than shown as 00:00.
+          const clock = (e.sort_key || "").slice(11, 19);
+          const time = e.at && e.at.length > 10 && clock !== "00:00:00"
+            ? clock.slice(0, 5) : "";
+          const link = e.refs.finding_id || e.refs.node_id;
+          return `<li class="tlentry c-${esc(e.category)}">
+            <span class="tltime">${esc(time)}</span>
+            <span class="tldot" aria-hidden="true"></span>
+            <div class="tlcontent">
+              <div class="tltitle">
+                <span class="tlkind">${esc(KIND_MARK[e.kind] || e.kind)}</span>
+                ${link ? `<button type="button" class="tllink"
+                    data-finding="${esc(e.refs.finding_id || "")}"
+                    data-node="${esc(e.refs.node_id || "")}">${esc(e.title)}</button>`
+                  : `<span>${esc(e.title)}</span>`}
+                ${tierBadge(e.tier)}
+              </div>
+              ${e.detail ? `<div class="tldetail">${esc(e.detail)}</div>` : ""}
+              <div class="tlmeta">
+                <span class="basis ${e.time_basis === "system" ? "sys" : ""}"
+                  title="${e.time_basis === "system"
+                    ? "When this system recorded or decided it"
+                    : "When it happened"}">${e.time_basis === "system"
+                    ? "system time" : "event time"}</span>
+                ${e.actor ? `<span>${esc(e.actor)}</span>` : ""}
+                ${e.ingested_time && e.time_basis === "event"
+                  ? `<span title="When this system learnt of it">recorded
+                     ${esc(whenText(e.ingested_time))}</span>` : ""}
+              </div>
+            </div>
+          </li>`;
+        }).join("")}
+      </ol>
+    </section>`).join("");
+
+  $$("#tlList .tllink").forEach(b => b.onclick = () => {
+    $("#timelineDialog").close();
+    if (b.dataset.finding) showFinding(b.dataset.finding);
+    else showNode(b.dataset.node);
+  });
+}
+
+async function submitStatus(form) {
+  const status = form.elements.status.value;
+  const reason = form.elements.reason.value.trim();
+  if (!reason) { toast("A status change must carry a reason.", "bad"); return; }
+  const caseId = S.currentCase;
+  try {
+    await api(`/api/cases/${encodeURIComponent(caseId)}/status`, {
+      method: "POST",
+      body: JSON.stringify({ status, reason, tier: form.elements.tier.value }),
+    });
+  } catch (e) { toast(e.message, "bad"); return; }
+  form.reset();
+  await loadOverview();
+  markCase(caseId);
+  const c = currentCaseRecord();
+  if (c) {
+    $("#canvasSub").textContent =
+      `${c.id} · ${c.props.district} · ${c.props.crime} · opened ${c.props.opened}` +
+      ` · ${statusLabel(c.props.status)}`;
+  }
+  await loadCaseTimeline();
+  toast(`Status changed to ${statusLabel(status)}. Written to the audit log.`, "good");
+}
+
+async function submitMilestone(form) {
+  if (!form.reportValidity()) return;
+  const f = form.elements;
+  const caseId = S.currentCase;
+  try {
+    await api(`/api/cases/${encodeURIComponent(caseId)}/milestones`, {
+      method: "POST",
+      body: JSON.stringify({
+        kind: f.kind.value, occurred_at: f.occurred_at.value,
+        title: f.title.value.trim(), detail: f.detail.value.trim(),
+        tier: f.tier.value,
+      }),
+    });
+  } catch (e) { toast(e.message, "bad"); return; }
+  f.title.value = "";
+  f.detail.value = "";
+  await loadCaseTimeline();
+  toast("Milestone added to the timeline.", "good");
+}
+
 /* ====================================================================== audit */
 async function loadAudit() {
   const a = await api("/api/audit-log?limit=300");
@@ -1327,7 +1670,9 @@ async function loadAudit() {
     : a.startsWith("FINDING_CONF") ? "decide"
     : a.startsWith("EMERGENCY") ? "emg"
     : a.startsWith("REPORT") ? "report"
-    : (a.startsWith("MERGE") || a.startsWith("FINDING_CREATED") || a === "INGEST") ? "write" : "";
+    : (a.startsWith("MERGE") || a.startsWith("FINDING_CREATED") || a === "INGEST" ||
+       a.startsWith("NOTE_") || a.startsWith("MILESTONE_") ||
+       a.startsWith("CASE_STATUS")) ? "write" : "";
 
   $("#auditTable").innerHTML =
     `<div class="arow head"><span>#</span><span>Timestamp</span><span>Actor</span>
@@ -1345,6 +1690,11 @@ async function loadAudit() {
 
 /* ======================================================================= boot */
 async function refreshAll() {
+  // Notes and timelines are filtered by tier; one fetched under the previous
+  // role must not stay on screen under the next.
+  closeDialogs();
+  S.notes = [];
+  S.timeline = null;
   await loadSession();
   await loadFindings();
   await loadOverview();
@@ -1396,6 +1746,7 @@ function boot() {
     if (!chain.found) { toast("No path visible at your tier.", "bad"); return; }
 
     markCase("C-001");
+    refreshNoteCount("C-001");
     setChainMode(true);
     $("#canvasTitle").textContent = "Cross-domain path · C-001 to C-005";
     $("#canvasSub").textContent =
@@ -1414,6 +1765,23 @@ function boot() {
     if (f) { $("#panel").innerHTML = explainHTML(f); wireExplain($("#panel"), f); }
     toast(`Path traced end to end: ${chain.hops} hops.`, "good");
   };
+
+  $("#noteIcon").innerHTML = iconMarkup("note", 20);
+  $("#btnNotes").onclick = openNotes;
+  $("#btnTimeline").onclick = openTimeline;
+  $$("dialog [data-close]").forEach(b => b.onclick = () => b.closest("dialog").close());
+  // A click on the backdrop lands on the dialog element itself.
+  $$("dialog.sheet").forEach(d => d.addEventListener("click", e => {
+    if (e.target === d) d.close();
+  }));
+  $("#noteForm").onsubmit = e => { e.preventDefault(); submitNote(e.currentTarget); };
+  $("#noteForm").elements.text.onkeydown = e => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault(); submitNote($("#noteForm"));
+    }
+  };
+  $("#statusForm").onsubmit = e => { e.preventDefault(); submitStatus(e.currentTarget); };
+  $("#milestoneForm").onsubmit = e => { e.preventDefault(); submitMilestone(e.currentTarget); };
 
   $("#intakeForm").onsubmit = e => { e.preventDefault(); submitIntake($("#btnIntake")); };
   $("#btnIntake").onclick = e => { e.preventDefault(); submitIntake(e.currentTarget); };

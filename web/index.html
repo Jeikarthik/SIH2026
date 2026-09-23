@@ -75,6 +75,7 @@
         <button id="btnFit" class="btn">Fit</button>
         <button id="btnChain" class="btn">Trace cross-domain link</button>
         <button id="btnBackToCase" class="btn" hidden>Back to case view</button>
+        <button id="btnTimeline" class="btn">Case timeline</button>
         <button id="btnExportCase" class="btn primary">Export report</button>
       </div>
     </div>
@@ -90,7 +91,16 @@
 
     <div class="canvasfoot">
       <div class="legend" id="legend"></div>
-      <span id="queryStat"></span>
+      <div class="footright">
+        <span id="queryStat"></span>
+        <!-- Anchored in the footer rather than floated over the canvas: the
+             graph is never partly hidden behind a control. -->
+        <button id="btnNotes" class="notebtn" aria-label="Case notes"
+                title="Case notes">
+          <span id="noteIcon" aria-hidden="true"></span>
+          <span class="notecount" id="noteCount" hidden>0</span>
+        </button>
+      </div>
     </div>
   </section>
 
@@ -259,6 +269,80 @@
     <div class="tablewrap"><div id="auditTable" class="datatable"></div></div>
   </section>
 </main>
+
+<!-- ============================================================ CASE NOTES -->
+<dialog id="notesDialog" class="sheet" aria-labelledby="notesTitle">
+  <div class="sheethead">
+    <div>
+      <h2 id="notesTitle">Case notes</h2>
+      <div class="sheetsub" id="notesSub"></div>
+    </div>
+    <button type="button" class="btn small" data-close>Close</button>
+  </div>
+  <div class="sheetbody">
+    <form id="noteForm" class="notecompose" autocomplete="off">
+      <textarea name="text" rows="3" required
+                aria-label="New note" placeholder="Write a note on this case"></textarea>
+      <div class="composebar">
+        <div class="swatches" id="noteSwatches" role="radiogroup"
+             aria-label="Note colour"></div>
+        <label class="ctl">Visible to
+          <select name="tier" id="noteTier"></select></label>
+        <button type="submit" class="btn primary">Add note</button>
+      </div>
+    </form>
+    <div id="noteList" class="notegrid"></div>
+  </div>
+</dialog>
+
+<!-- ========================================================= CASE TIMELINE -->
+<dialog id="timelineDialog" class="sheet wide" aria-labelledby="tlTitle">
+  <div class="sheethead">
+    <div>
+      <h2 id="tlTitle">Case timeline</h2>
+      <div class="sheetsub" id="tlSub"></div>
+    </div>
+    <button type="button" class="btn small" data-close>Close</button>
+  </div>
+  <div class="sheetbody tlbody">
+    <div class="tlmain">
+      <div id="tlFilters" class="tlfilters"></div>
+      <div id="tlList" class="tllist"></div>
+    </div>
+    <aside class="tlside">
+      <section class="tlcard">
+        <h3>Case status</h3>
+        <div id="tlStatus" class="tlstatus"></div>
+        <form id="statusForm" class="tlform" autocomplete="off">
+          <label class="fld">Change to
+            <select name="status" id="statusSelect" required></select></label>
+          <label class="fld">Reason
+            <textarea name="reason" rows="2" required maxlength="2000"
+                      placeholder="Required. Recorded on the timeline."></textarea></label>
+          <label class="fld">Reason visible to
+            <select name="tier" id="statusTier"></select></label>
+          <button type="submit" class="btn primary">Update status</button>
+        </form>
+      </section>
+      <section class="tlcard">
+        <h3>Log a milestone</h3>
+        <form id="milestoneForm" class="tlform" autocomplete="off">
+          <label class="fld">What happened
+            <select name="kind" id="milestoneKind" required></select></label>
+          <label class="fld">When
+            <input name="occurred_at" type="datetime-local" required></label>
+          <label class="fld">Title
+            <input name="title" required maxlength="120"></label>
+          <label class="fld">Detail
+            <textarea name="detail" rows="2" maxlength="2000"></textarea></label>
+          <label class="fld">Visible to
+            <select name="tier" id="milestoneTier"></select></label>
+          <button type="submit" class="btn primary">Add to timeline</button>
+        </form>
+      </section>
+    </aside>
+  </div>
+</dialog>
 
 <div id="toast" class="toast" role="status"></div>
 

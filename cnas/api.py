@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime
 from typing import Any
 
 from fastapi import (Body, Depends, FastAPI, File, HTTPException, Query,
@@ -15,7 +16,7 @@ from fastapi import (Body, Depends, FastAPI, File, HTTPException, Query,
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import (config, extract as extract_mod, intake as intake_mod,
+from . import (casefile, config, extract as extract_mod, intake as intake_mod,
                mechanisms, report as report_mod, store as store_mod)
 from .auth import Principal, current
 from .er import Resolver
@@ -26,6 +27,11 @@ app = FastAPI(title="CNAS", version="0.1.0",
 
 _graph: GraphStore | None = None
 _findings: list[dict[str, Any]] = []
+
+# The case-file tables were added after the first databases were built. Every
+# CREATE is IF NOT EXISTS, so this is a no-op on a current database and brings
+# an older one up to date without a pipeline rebuild wiping it.
+store_mod.init()
 
 # The graph and the findings are held in memory between requests, and
 # run_pipeline.py rebuilds both files from seed underneath a running server.
@@ -90,6 +96,14 @@ def session(p: Principal = Depends(current)) -> dict[str, Any]:
         "hidden_from_you": g.hidden_count(p.tiers),
         "findings_visible": len(_visible_findings(p)),
         "findings_total_all_tiers": len(findings()),
+        "case_vocab": {
+            "statuses": config.CASE_STATUSES,
+            "milestone_kinds": {k: v for k, v in config.MILESTONE_KINDS.items()
+                                if k not in config.SYSTEM_MILESTONE_KINDS},
+            "note_colors": config.NOTE_COLORS,
+            "note_max_chars": config.NOTE_MAX_CHARS,
+            "categories": casefile.CATEGORIES,
+        },
     }
 
 
@@ -235,15 +249,7 @@ def _doc(blocks: list, basename: str, fmt: str,
 
 def _findings_on_network(node_ids: set[str], p: Principal) -> list[dict[str, Any]]:
     """Findings any part of which touches the given set of records."""
-    out = []
-    for f in _visible_findings(p):
-        touched = set(f.get("subject_ids") or [])
-        touched |= {e.get("node_id") for e in (f.get("evidence") or [])}
-        if touched & node_ids:
-            out.append(f)
-    order = {"pending": 0, "confirmed": 1, "rejected": 2}
-    out.sort(key=lambda f: (order.get(f["status"], 9), -f["confidence"]))
-    return out
+    return casefile.findings_on_network(_visible_findings(p), node_ids)
 
 
 @app.get("/api/report/case/{case_id}")
@@ -429,6 +435,7 @@ def intake_fir(payload: dict = Body(...),
                 continue
             if created["case_id"] not in f.subject_ids:
                 continue
+            f.created_at = store_mod.now()
             new_findings.append(f.to_dict())
             store_mod.audit(p.actor, p.role, "FINDING_CREATED", f.finding_id,
                             {"mechanism": f.mechanism, "confidence": f.confidence,
@@ -450,6 +457,235 @@ def intake_fir(payload: dict = Body(...),
         "attached_to": [n for n in attached if n not in new_ids],
         "findings": new_findings,
     }
+
+
+# ------------------------------------------------------------------- case file
+#
+# Notes, milestones and status belong to a case, so every route here starts by
+# resolving the case under the caller's tiers: a case the caller cannot see has
+# no notes and no timeline, and is reported as absent rather than forbidden.
+#
+# The audit ledger is not tier-filtered - every role can read it - so the
+# entries written here record what was done and to which case, with the tier,
+# length and a digest of any text, and never the text itself. A Restricted
+# analyst's note about a Restricted record must not reach a Standard officer
+# by way of the audit tab.
+
+def _case_or_404(case_id: str, p: Principal) -> dict[str, Any]:
+    case = graph().node(case_id, p.tiers)
+    if case is None or case["label"] != "Case":
+        raise HTTPException(status_code=404, detail="no such case")
+    return case
+
+
+def _tier_for(payload: dict, p: Principal) -> str:
+    """The tier a new note or milestone is filed at.
+
+    Defaults to the author's most sensitive tier, which fails closed: an
+    analyst writing about a Restricted record who forgets to choose has not
+    published it to every officer. Lowering it is a choice they make.
+    """
+    tier = str(payload.get("tier") or p.tiers[-1])
+    if tier not in p.tiers:
+        raise HTTPException(status_code=400,
+                            detail="you cannot file material at that tier")
+    return tier
+
+
+def _note_text(payload: dict) -> str:
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="a note cannot be empty")
+    if len(text) > config.NOTE_MAX_CHARS:
+        raise HTTPException(status_code=400,
+                            detail=f"a note is limited to {config.NOTE_MAX_CHARS} characters")
+    return text
+
+
+def _note_color(payload: dict) -> str:
+    color = str(payload.get("color") or config.NOTE_COLORS[0])
+    if color not in config.NOTE_COLORS:
+        raise HTTPException(status_code=400, detail="unknown note colour")
+    return color
+
+
+def _own_note(case_id: str, note_id: str, p: Principal) -> dict[str, Any]:
+    note = store_mod.get_note(case_id, note_id)
+    if note is None or not p.can_see(note["tier"]):
+        raise HTTPException(status_code=404, detail="no such note")
+    # The login is a role, so authorship is by role: a note can be changed by
+    # whoever holds the role that wrote it, and seen by anyone cleared for it.
+    if note["role"] != p.role:
+        raise HTTPException(status_code=403,
+                            detail="only the author of a note can change it")
+    return note
+
+
+def _note_audit(note: dict[str, Any]) -> dict[str, Any]:
+    return {"note_id": note["note_id"], "tier": note["tier"],
+            "chars": len(note["text"]),
+            "sha256": store_mod.content_digest(note["text"])}
+
+
+@app.get("/api/cases/{case_id}/notes")
+def list_notes(case_id: str, p: Principal = Depends(current)) -> dict[str, Any]:
+    _case_or_404(case_id, p)
+    notes = store_mod.list_notes(case_id, p.tiers)
+    for n in notes:
+        n["mine"] = n["role"] == p.role
+    return {"case_id": case_id, "notes": notes}
+
+
+@app.post("/api/cases/{case_id}/notes")
+def add_note(case_id: str, payload: dict = Body(...),
+             p: Principal = Depends(current)) -> dict[str, Any]:
+    _case_or_404(case_id, p)
+    note = store_mod.add_note(case_id, _note_text(payload), _note_color(payload),
+                              _tier_for(payload, p), p.display, p.role)
+    store_mod.audit(p.actor, p.role, "NOTE_ADDED", case_id, _note_audit(note))
+    return {**note, "mine": True}
+
+
+@app.patch("/api/cases/{case_id}/notes/{note_id}")
+def edit_note(case_id: str, note_id: str, payload: dict = Body(...),
+              p: Principal = Depends(current)) -> dict[str, Any]:
+    _case_or_404(case_id, p)
+    note = _own_note(case_id, note_id, p)
+    changes: dict[str, Any] = {}
+    if "text" in payload:
+        changes["text"] = _note_text(payload)
+    if "color" in payload:
+        changes["color"] = _note_color(payload)
+    if "tier" in payload:
+        changes["tier"] = _tier_for(payload, p)
+    if not changes:
+        raise HTTPException(status_code=400, detail="nothing to change")
+    store_mod.update_note(note_id, changes)
+    updated = store_mod.get_note(case_id, note_id)
+    store_mod.audit(p.actor, p.role, "NOTE_EDITED", case_id,
+                    {**_note_audit(updated), "fields": sorted(changes),
+                     "previous_sha256": store_mod.content_digest(note["text"])})
+    return {**updated, "mine": True}
+
+
+@app.delete("/api/cases/{case_id}/notes/{note_id}")
+def delete_note(case_id: str, note_id: str,
+                p: Principal = Depends(current)) -> dict[str, Any]:
+    _case_or_404(case_id, p)
+    note = _own_note(case_id, note_id, p)
+    store_mod.soft_delete_note(note_id)
+    store_mod.audit(p.actor, p.role, "NOTE_DELETED", case_id, _note_audit(note))
+    return {"note_id": note_id, "deleted": True}
+
+
+@app.get("/api/cases/{case_id}/timeline")
+def case_timeline(case_id: str, hops: int = Query(2, ge=1, le=4),
+                  p: Principal = Depends(current)) -> dict[str, Any]:
+    case = _case_or_404(case_id, p)
+    vis = _visible_findings(p)
+    decisions = [d for d in store_mod.audit_for_targets(f["finding_id"] for f in vis)
+                 if d["action"] in ("FINDING_CONFIRMED", "FINDING_REJECTED")]
+    result = casefile.build_timeline(
+        graph(), case, vis,
+        notes=store_mod.list_notes(case_id, p.tiers),
+        milestones=store_mod.list_milestones(case_id, p.tiers),
+        decisions=decisions, tiers=p.tiers, hops=hops)
+    store_mod.audit(p.actor, p.role, "VIEW_TIMELINE", case_id,
+                    {"entries": len(result["entries"]), "hops": hops})
+    return result
+
+
+def _occurred_at(value: Any) -> str:
+    text = str(value or "").strip()
+    try:
+        when = datetime.fromisoformat(text)
+    except ValueError:
+        raise HTTPException(status_code=400,
+                            detail="the date must be given as YYYY-MM-DD or "
+                                   "YYYY-MM-DDTHH:MM") from None
+    if when.tzinfo is not None:
+        when = when.astimezone().replace(tzinfo=None)
+    # A milestone is something that has happened. A diary entry for next week
+    # is a plan, and a timeline that mixes the two stops being a record.
+    if when > datetime.now():
+        raise HTTPException(status_code=400,
+                            detail="a milestone cannot be dated in the future")
+    return text if len(text) == 10 else when.isoformat(timespec="minutes")
+
+
+@app.post("/api/cases/{case_id}/milestones")
+def add_milestone(case_id: str, payload: dict = Body(...),
+                  p: Principal = Depends(current)) -> dict[str, Any]:
+    _case_or_404(case_id, p)
+    kind = str(payload.get("kind") or "")
+    if kind not in config.MILESTONE_KINDS or kind in config.SYSTEM_MILESTONE_KINDS:
+        raise HTTPException(status_code=400, detail="unknown milestone kind")
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="a milestone needs a title")
+    if len(title) > config.MILESTONE_TITLE_MAX:
+        raise HTTPException(status_code=400, detail="the title is too long")
+    detail = str(payload.get("detail") or "").strip()
+    if len(detail) > config.MILESTONE_DETAIL_MAX:
+        raise HTTPException(status_code=400, detail="the detail is too long")
+    m = store_mod.add_milestone(case_id, kind, title, detail,
+                                _occurred_at(payload.get("occurred_at")),
+                                _tier_for(payload, p), p.display, p.role)
+    store_mod.audit(p.actor, p.role, "MILESTONE_ADDED", case_id,
+                    {"milestone_id": m["milestone_id"], "kind": kind,
+                     "tier": m["tier"]})
+    return m
+
+
+def _status_label(s: str) -> str:
+    return config.CASE_STATUSES.get(s, s.replace("_", " ") or "none")
+
+
+@app.post("/api/cases/{case_id}/status")
+def set_status(case_id: str, payload: dict = Body(...),
+               p: Principal = Depends(current)) -> dict[str, Any]:
+    case = _case_or_404(case_id, p)
+    status = str(payload.get("status") or "")
+    if status not in config.CASE_STATUSES:
+        raise HTTPException(status_code=400, detail="unknown case status")
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        # As with a rejected finding, a change nobody can account for later
+        # is not a decision on the record.
+        raise HTTPException(status_code=400,
+                            detail="a status change must carry a reason")
+    if len(reason) > config.MILESTONE_DETAIL_MAX:
+        raise HTTPException(status_code=400, detail="the reason is too long")
+    previous = str(case["props"].get("status") or "")
+    if status == previous:
+        raise HTTPException(status_code=400, detail="the case already has that status")
+    _tier_for(payload, p)   # refuse before anything is written, not after
+
+    # The graph holds the case twice - the NetworkX node and the raw record it
+    # is saved from - and both must change, or the next save reverts it.
+    g = graph()
+    g.g.nodes[case_id]["status"] = status
+    for n in g.raw["nodes"]:
+        if n["id"] == case_id:
+            n.setdefault("props", {})["status"] = status
+    g.save()
+    _mark_written("graph", config.GRAPH_PATH)
+
+    # The status itself is a property of the case and everyone who can see
+    # the case sees it. The reason for the change is authored text, and can
+    # name what only the author is cleared for, so the timeline entry that
+    # carries it is filed like a note: at the author's tier unless lowered.
+    m = store_mod.add_milestone(
+        case_id, "status_change",
+        f"{_status_label(previous)} → {_status_label(status)}", reason,
+        datetime.now().isoformat(timespec="minutes"),
+        _tier_for(payload, p), p.display, p.role)
+    store_mod.audit(p.actor, p.role, "CASE_STATUS_CHANGED", case_id,
+                    {"from": previous, "to": status,
+                     "milestone_id": m["milestone_id"],
+                     "reason_sha256": store_mod.content_digest(reason)})
+    return {"case_id": case_id, "status": status, "previous": previous,
+            "milestone": m}
 
 
 # ------------------------------------------------------------------- emergency

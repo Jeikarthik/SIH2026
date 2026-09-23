@@ -131,9 +131,11 @@ MO_FEATURES = {
 
 def _build_entities() -> None:
     # ---------------------------------------------------------------- cases
+    # A case's status and its last status_change milestone in MILESTONES must
+    # agree: C-001 (confirmed) and C-005 (chargesheeted) each have one.
     _n("C-001", "Case", district="Jaipur", pack=7, title="Jewellery showroom burglary",
        crime="Theft & Robbery", opened="2025-03-12", officer="SI A. Meena",
-       status="under_investigation", source="CCTNS/RJ/JPR/2025/00417")
+       status="confirmed", source="CCTNS/RJ/JPR/2025/00417")
     _n("C-002", "Case", district="Indore", pack=3, title="UPI fraud - 41 victims",
        crime="Cybercrime & Fraud", opened="2025-04-02", officer="SI P. Sharma",
        status="under_investigation", source="NCRP/MP/IND/2025/10233")
@@ -145,7 +147,7 @@ def _build_entities() -> None:
        status="under_investigation", source="CCTNS/MH/NGP/2025/03119")
     _n("C-005", "Case", district="Kandla", pack=6, title="Undeclared consignment - Kandla port",
        crime="Smuggling & Customs", opened="2025-07-09", officer="DRI Off. S. Nair",
-       status="under_investigation", source="ICEGATE/DRI/2025/00291")
+       status="chargesheeted", source="ICEGATE/DRI/2025/00291")
     _n("C-006", "Case", district="Bhopal", pack=10, title="Abduction for ransom - minor",
        crime="Kidnapping & Extortion", opened="2026-09-08", officer="DSP M. Qureshi",
        status="active_emergency", source="CCTNS/MP/BPL/2026/07740")
@@ -154,11 +156,17 @@ def _build_entities() -> None:
        status="under_investigation", source="CCTNS/MH/PUN/2025/09982")
 
     # ------------------------------------------------------------ documents
-    for cid, narrative in (("C-001", NARRATIVE_C001), ("C-004", NARRATIVE_C004),
-                           ("C-007", NARRATIVE_C007)):
+    # Each FIR is filed on the day its case is opened. The case timeline shows
+    # when every document entered the case, so a shared date here would show
+    # two FIRs collected months before the cases they belong to existed.
+    for cid, narrative, filed in (
+        ("C-001", NARRATIVE_C001, "2025-03-12T09:00:00"),
+        ("C-004", NARRATIVE_C004, "2025-06-24T09:00:00"),
+        ("C-007", NARRATIVE_C007, "2025-08-30T10:00:00"),
+    ):
         _n(f"D-{cid[2:]}", "Document", doc_type="FIR", case=cid, language="en",
            narrative=narrative, source=f"FIR/{cid}")
-        _e(f"D-{cid[2:]}", cid, "APPEARS_IN", "2025-03-12T09:00:00")
+        _e(f"D-{cid[2:]}", cid, "APPEARS_IN", filed)
 
     _n("D-002", "Document", doc_type="Complaint bundle", case="C-002", language="hi",
        narrative="41 individual complaints of UPI debit following an OTP-sharing "
@@ -454,6 +462,102 @@ def _make_daily_volume() -> dict[str, list[dict[str, Any]]]:
             "credit": int(credit),
         })
     return {"ACC-7781": series}
+
+
+# ==========================================================================
+# Investigative milestones
+#
+# The graph records evidence and relationships; it does not record that an
+# arrest was made or a chargesheet filed. These are the steps an investigating
+# officer would log against each case, written to fit the planted scenarios
+# above, so every case timeline runs from complaint to its present state.
+# They are loaded into the case_milestones table by run_pipeline.py.
+# ==========================================================================
+
+MILESTONES: list[dict[str, Any]] = [
+    # C-001 Jaipur burglary: the head of the cross-domain chain.
+    {"case_id": "C-001", "kind": "complaint_received", "occurred_at": "2025-03-12T06:10:00",
+     "title": "Showroom owner reports break-in",
+     "detail": "Complaint received at Kotwali PS after staff found the shutter cut."},
+    {"case_id": "C-001", "kind": "scene_inspection", "occurred_at": "2025-03-12T08:30:00",
+     "title": "Scene inspected with forensic team",
+     "detail": "Cut marks on shutter lock consistent with a thermal cutter. DVR found disconnected."},
+    {"case_id": "C-001", "kind": "evidence_seized", "occurred_at": "2025-03-13T11:00:00",
+     "title": "Neighbouring shop CCTV footage seized",
+     "detail": "Footage shows three persons and a motorcycle without a number plate."},
+    {"case_id": "C-001", "kind": "search_raid", "occurred_at": "2025-03-18T16:00:00",
+     "title": "Search at Johari Bazar bullion shop",
+     "detail": "Melting receipt for 2.4 kg gold seized from Shop 221."},
+    {"case_id": "C-001", "kind": "arrest", "occurred_at": "2025-03-20T10:45:00",
+     "title": "Receiver of stolen property arrested",
+     "detail": "Imran Shaikh (P-010) arrested under BNS s.317."},
+    {"case_id": "C-001", "kind": "status_change", "occurred_at": "2025-03-22T12:00:00",
+     "title": "Under investigation → Confirmed",
+     "detail": "Receiver's statement and the melting receipt corroborate the theft."},
+    # C-002 Indore UPI fraud.
+    {"case_id": "C-002", "kind": "complaint_received", "occurred_at": "2025-04-02T09:30:00",
+     "title": "41 NCRP complaints consolidated",
+     "detail": "Victims report UPI debits after sharing an OTP on a call."},
+    {"case_id": "C-002", "kind": "evidence_seized", "occurred_at": "2025-04-05T15:00:00",
+     "title": "Beneficiary account statements obtained",
+     "detail": "Beneficiary handles resolve to four accounts."},
+    # Kept to what the Indore officer could know from inside this case: the
+    # link to other districts is what entity resolution finds, not a step
+    # anyone logged.
+    {"case_id": "C-002", "kind": "forensic_report", "occurred_at": "2025-04-11T12:00:00",
+     "title": "CDRs requested for beneficiary contact numbers",
+     "detail": "Requests sent to Jio and Airtel nodal officers."},
+    # C-003 Surat layering.
+    {"case_id": "C-003", "kind": "complaint_received", "occurred_at": "2025-05-18T10:00:00",
+     "title": "FIU suspicious transaction report referred",
+     "detail": "STR on trade accounts showing rapid layering."},
+    {"case_id": "C-003", "kind": "evidence_seized", "occurred_at": "2025-05-22T14:00:00",
+     "title": "Account opening forms obtained from bank",
+     "detail": "KYC documents for the account holder requested under s.94 BNSS."},
+    {"case_id": "C-003", "kind": "interrogation", "occurred_at": "2025-06-03T11:00:00",
+     "title": "Account holder questioned",
+     "detail": "Holder states the account was operated by an associate."},
+    # C-004 Nagpur burglary: the MO twin of C-001.
+    {"case_id": "C-004", "kind": "complaint_received", "occurred_at": "2025-06-24T06:45:00",
+     "title": "Gold retail outlet reports burglary", "detail": ""},
+    {"case_id": "C-004", "kind": "scene_inspection", "occurred_at": "2025-06-24T09:30:00",
+     "title": "Scene inspected",
+     "detail": "Padlock severed with an oxy-acetylene torch; surveillance disabled."},
+    {"case_id": "C-004", "kind": "arrest", "occurred_at": "2025-07-02T18:00:00",
+     "title": "Suspect detained for questioning",
+     "detail": "Sandeep Bhoyar (P-011) detained on witness description."},
+    # C-005 Kandla consignment: the tail of the chain, with one restricted step.
+    {"case_id": "C-005", "kind": "evidence_seized", "occurred_at": "2025-07-09T08:15:00",
+     "title": "DRI seizes consignment BE/2025/KDL/88214",
+     "detail": "Declared as ceramic tableware; 18.2 kg of gold dore bars found."},
+    {"case_id": "C-005", "kind": "search_raid", "occurred_at": "2025-07-11T07:00:00",
+     "title": "Search at importer's Gandhidham premises",
+     "detail": "Letter of credit documents seized."},
+    {"case_id": "C-005", "kind": "other", "occurred_at": "2025-07-15T20:00:00",
+     "title": "ACB informant report on customs clearance",
+     "detail": "Source reports the consignment was cleared out of turn. Source-protected.",
+     "tier": "restricted"},
+    {"case_id": "C-005", "kind": "chargesheet_filed", "occurred_at": "2025-10-06T11:00:00",
+     "title": "Complaint filed under Customs Act s.135",
+     "detail": "Filed against the importer and the financier."},
+    {"case_id": "C-005", "kind": "status_change", "occurred_at": "2025-10-06T11:05:00",
+     "title": "Under investigation → Chargesheeted",
+     "detail": "Prosecution complaint filed before the Additional Chief Judicial Magistrate."},
+    # C-006 Bhopal kidnapping: live.
+    {"case_id": "C-006", "kind": "complaint_received", "occurred_at": "2026-09-08T19:40:00",
+     "title": "Parents report minor missing; ransom demanded", "detail": ""},
+    # The caller's number is recorded, not traced: that it is already on file
+    # in C-002 is what the emergency lookup is there to show, live.
+    {"case_id": "C-006", "kind": "other", "occurred_at": "2026-09-08T21:30:00",
+     "title": "Ransom call received on the parent's phone",
+     "detail": "Calling number and call duration recorded."},
+    # C-007 Pune two-wheeler theft.
+    {"case_id": "C-007", "kind": "complaint_received", "occurred_at": "2025-08-30T08:50:00",
+     "title": "Owner reports motorcycle stolen overnight", "detail": ""},
+    {"case_id": "C-007", "kind": "other", "occurred_at": "2025-09-02T12:00:00",
+     "title": "Vehicle circulated on VAHAN and ICJS",
+     "detail": "No recovery to date."},
+]
 
 
 def build() -> dict[str, Any]:
