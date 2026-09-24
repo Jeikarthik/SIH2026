@@ -18,6 +18,9 @@ or phone number (PRD principle P7).
 pip install -r requirements.txt
 python run_pipeline.py     # build the graph, resolve entities, run detection
 python serve.py            # opens http://127.0.0.1:8077
+
+pip install -r requirements-dev.txt
+python -m pytest           # API tests; each builds its own dataset in a temp dir
 ```
 
 No database server, no Docker, no build step, no network access required —
@@ -231,6 +234,41 @@ read.
 
 ---
 
+## Case notes and the case timeline
+
+Every case page has a **sticky-note icon** at the bottom right, with a count of
+the notes on that case. It opens the case's notes. Officers can write, colour,
+edit and delete them, and each note shows who wrote it and when.
+
+**Case timeline** in the canvas toolbar opens the whole history of the case
+in one place, oldest first:
+
+| Entry | Where it comes from |
+|---|---|
+| Case registered | The case's own opening date |
+| Evidence entered the case | Every record attached to the case, with both the date it happened and the date the system learnt of it |
+| Network activity | Dated events in the surrounding network: fencing, transfers, calls |
+| Resolution and findings | Entity-resolution merges and detection findings touching the network |
+| Decisions | Every confirm or reject taken on those findings, kept even when later reversed, plus every change of case status |
+| Investigation | Milestones an officer logs: arrest, raid, seizure, chargesheet, hearing (confirming or closing a case is a status change, not a milestone) |
+| Notes | That a note was written, and by whom (the text stays in the notes panel) |
+
+The case status can be changed from the same screen, but only with a reason.
+The change becomes a timeline entry. Each seeded case carries a few synthetic
+milestones, so every timeline runs from complaint to its present state.
+
+Both features follow the rules the rest of the system keeps:
+- **Tiers apply.** Notes and milestones carry an access tier and are filtered
+  on the server. A note defaults to its author's most sensitive tier, so a
+  Restricted analyst's note never reaches a Standard officer by accident.
+- **The audit log records the act, not the text.** The audit log is readable
+  at every tier. Each note, milestone or status change is written there as an
+  id, a tier and a SHA-256 of the text.
+- **A rebuild clears them.** `run_pipeline.py` resets notes and milestones
+  along with everything else, because intake reuses case ids after a rebuild.
+
+---
+
 ## Design decisions worth defending
 
 **A `Finding` cannot be constructed without its full contract.** Evidence,
@@ -271,7 +309,8 @@ cnas/
   er.py           entity resolution: deterministic pass, then three-band
   findings.py     the Explainability Contract, enforced
   mechanisms.py   all six mechanism families
-  store.py        hash-chained audit, token vault, model registry
+  store.py        hash-chained audit, token vault, model registry, case notes/milestones
+  casefile.py     a case's full timeline, assembled on read
   auth.py         role -> tiers
   extract.py      reading an FIR document: form fields, patterns, MO lexicon
   intake.py       a new FIR arriving at a graph that already exists
@@ -279,6 +318,7 @@ cnas/
   api.py          FastAPI
 web/              single-page console (vendored Cytoscape.js)
 samples/          synthetic FIR documents to drop into evidence intake
+tests/            pytest suite for the case-file API (notes, timeline, status)
 data/             generated — graph.json, findings.json, cnas.sqlite
 ```
 

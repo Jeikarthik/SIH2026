@@ -153,6 +153,45 @@ PACK_LABELS = {
     10: "Kidnapping & Extortion",
 }
 
+# --------------------------------------------------------------------------
+# Case file: status, investigative milestones and officer notes.
+# A case's lifecycle is recorded as milestones against it; the status on the
+# Case node is the latest of them, and every change to it is a milestone too.
+# --------------------------------------------------------------------------
+CASE_STATUSES = {
+    "under_investigation": "Under investigation",
+    "active_emergency": "Active emergency",
+    "confirmed": "Confirmed",
+    "chargesheeted": "Chargesheeted",
+    "under_trial": "Under trial",
+    "closed": "Closed",
+}
+
+MILESTONE_KINDS = {
+    "complaint_received": "Complaint received",
+    "scene_inspection": "Scene inspection",
+    "evidence_seized": "Evidence seized",
+    "search_raid": "Search / raid",
+    "arrest": "Arrest",
+    "interrogation": "Interrogation",
+    "forensic_report": "Forensic report",
+    "chargesheet_filed": "Chargesheet filed",
+    "court_hearing": "Court hearing",
+    "status_change": "Status changed",
+    "other": "Other",
+}
+# There is deliberately no "case confirmed" or "case closed" milestone:
+# confirming or closing a case is a status change, and recording it any other
+# way would let the timeline say "closed" beside a status that says otherwise.
+# Recorded by the system when the status endpoint is used, never offered to
+# an officer as a free choice: a status change without the status is a lie.
+SYSTEM_MILESTONE_KINDS = {"status_change"}
+
+NOTE_COLORS = ["yellow", "blue", "green", "pink", "grey"]
+NOTE_MAX_CHARS = 4000
+MILESTONE_TITLE_MAX = 120
+MILESTONE_DETAIL_MAX = 2000
+
 MECHANISM_FAMILIES = {
     # Entity resolution is not one of the five detection families; it is the
     # subsystem that feeds all of them. It carries the same Explainability

@@ -45,6 +45,9 @@ class Finding:
     decision_reason: str | None = None
     decided_by: str | None = None
     decided_at: str | None = None
+    # When the mechanism raised it. Optional so findings files written before
+    # the field existed still load; the case timeline skips a finding without it.
+    created_at: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)  # mechanism-specific panel data
 
     def __post_init__(self) -> None:
