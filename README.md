@@ -20,7 +20,7 @@ python run_pipeline.py     # build the graph, resolve entities, run detection
 python serve.py            # opens http://127.0.0.1:8077
 
 pip install -r requirements-dev.txt
-python -m pytest           # API tests; each builds its own dataset in a temp dir
+python -m pytest           # 25 API tests; each builds its own dataset in a temp dir
 ```
 
 No database server, no Docker, no build step, no network access required —
@@ -58,7 +58,7 @@ judge asks.
 | PII tokenisation | Vault | SQLite token vault with logged detokenisation |
 
 The graph store is the one substitution worth stating plainly rather than
-glossing: at ~90 nodes the algorithms and their results are identical, and the
+glossing: at ~60 nodes the algorithms and their results are identical, and the
 swap to a Cypher-backed store means rewriting one file.
 
 ---
@@ -322,4 +322,6 @@ tests/            pytest suite for the case-file API (notes, timeline, status)
 data/             generated — graph.json, findings.json, cnas.sqlite
 ```
 
-See `DEMO_SCRIPT.md` for the six-step walkthrough mapped 1:1 to PRD §7.3.
+See `DEMO_SCRIPT.md` for the 3-minute demo video script: a plain-language
+walkthrough that touches all six PRD §7.3 criteria, then evidence intake and the
+case timeline.

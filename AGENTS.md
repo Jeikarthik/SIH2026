@@ -30,8 +30,8 @@ node --check web/app.js       # only JS check available (no bundler, no linter)
   `data/graph.json`, `data/findings.json` and `data/cnas.sqlite`, which holds
   the audit log, the token vault, the model registry, **case notes** and
   **case milestones**. It must exit 0, with all six criteria PASS.
-- **Environment on the dev machine.** It is Windows. The global Pythons lack
-  the dependencies, so use `.venv` (gitignored). Set `PYTHONIOENCODING=utf-8`
+- **Environment on the dev machine.** It is Windows. If the global Python
+  lacks the dependencies, use `.venv` (gitignored). Set `PYTHONIOENCODING=utf-8`
   when printing Devanagari or `→` to the console.
 
 ## Data flow
